@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Background: rounded square in cream -->
+  <rect width="512" height="512" rx="108" fill="#f5f0e8"/>
+
+  <!-- Eye shape: two arcs forming an almond -->
+  <path d="M112 256 Q256 148 400 256 Q256 364 112 256Z"
+        stroke="#7a6555" stroke-width="18" stroke-linejoin="round" fill="none"/>
+
+  <!-- Iris circle -->
+  <circle cx="256" cy="256" r="42" stroke="#7a6555" stroke-width="16" fill="none"/>
+
+  <!-- Pupil dot -->
+  <circle cx="256" cy="256" r="14" fill="#7a6555"/>
+
+  <!-- Catchlight -->
+  <circle cx="270" cy="244" r="6" fill="#f5f0e8"/>
+</svg>
