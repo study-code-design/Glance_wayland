@@ -316,6 +316,16 @@ impl ApplicationHandler<CaptureCommand> for CaptureHandler {
                 }
             }
 
+            // Right-click to cancel capture.
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                ..
+            } => {
+                let _ = session.event_tx.send(CaptureEvent::Cancelled);
+                self.close_window();
+            }
+
             WindowEvent::CloseRequested => {
                 let _ = session.event_tx.send(CaptureEvent::Cancelled);
                 self.close_window();

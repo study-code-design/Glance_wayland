@@ -10,3 +10,4 @@ notes/
 tools/
 *.jpg
 *.jpeg
+!assets/*.jpg
