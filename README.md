@@ -87,3 +87,7 @@ cargo tauri build
 ## 许可证
 
 MIT
+
+## 友链
+
+- [Linux.do](https://linux.do) — 一个真实、自由、纯粹的技术社区
