@@ -157,7 +157,8 @@ pub async fn begin_capture(app: AppHandle, state: State<'_, SharedState>) -> App
         .map_err(|e| AppError::Capture(format!("find monitor task failed: {e}")))?
         ?;
 
-    tracing::info!("[PERF] find_primary_screen: {:?}", t0.elapsed());
+    let scale_factor = monitor.scale_factor;
+    tracing::info!("[PERF] find_primary_screen: {:?} (scale={})", t0.elapsed(), scale_factor);
 
     // Step 2: Capture screen to raw RGBA bytes.
     let (rgba, w, h) = tokio::task::spawn_blocking(move || {
@@ -165,7 +166,7 @@ pub async fn begin_capture(app: AppHandle, state: State<'_, SharedState>) -> App
     })
     .await
     .map_err(|e| AppError::Capture(format!("capture task failed: {e}")))?
-    ?;
+        ?;
 
     tracing::info!(
         "[PERF] capture_to_memory: {:?} | {}x{} ({:.1} MB RGBA)",
@@ -176,7 +177,7 @@ pub async fn begin_capture(app: AppHandle, state: State<'_, SharedState>) -> App
 
     // Step 3: Start native capture window (sends event to singleton event loop).
     let (event_tx, event_rx) = mpsc::channel::<CaptureEvent>();
-    capture_window::start_capture(rgba.clone(), w, h, event_tx);
+    capture_window::start_capture(rgba.clone(), w, h, scale_factor, event_tx);
 
     tracing::info!("[PERF] start_capture: {:?}", t0.elapsed());
 
@@ -184,7 +185,7 @@ pub async fn begin_capture(app: AppHandle, state: State<'_, SharedState>) -> App
     let state_clone = state.inner().clone();
     let app_clone = app.clone();
     tokio::spawn(async move {
-        handle_capture_events(event_rx, rgba, w, h, state_clone, app_clone).await;
+        handle_capture_events(event_rx, rgba, w, h, scale_factor, state_clone, app_clone).await;
     });
 
     emit_workflow_state(&app, "请框选需要翻译的区域", "", false)?;
@@ -196,6 +197,7 @@ async fn handle_capture_events(
     rgba: Vec<u8>,
     img_w: u32,
     _img_h: u32,
+    _scale_factor: f64,
     state: SharedState,
     app: AppHandle,
 ) {
@@ -254,7 +256,7 @@ async fn handle_capture_events(
                     monitor_y: y as i32,
                     monitor_width: w,
                     monitor_height: h,
-                    monitor_scale_factor: 1.0,
+                    monitor_scale_factor: scale_factor,
                 };
 
                 let translate_result = state

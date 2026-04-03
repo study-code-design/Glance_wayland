@@ -8,6 +8,7 @@ mod commands;
 mod config;
 mod error;
 mod google_translate;
+mod macos_permissions;
 mod models;
 
 use std::path::PathBuf;
@@ -38,6 +39,14 @@ fn main() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                if !macos_permissions::has_screen_recording_permission() {
+                    tracing::warn!("Screen recording permission not granted on macOS. Requesting access...");
+                    macos_permissions::request_screen_recording_permission();
+                }
+            }
+
             let base_dir = app
                 .path()
                 .app_data_dir()

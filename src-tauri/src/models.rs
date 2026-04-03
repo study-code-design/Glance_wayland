@@ -31,6 +31,14 @@ pub struct TranslatorSettings {
 
 impl Default for TranslatorSettings {
     fn default() -> Self {
+        let (os_version, mid, product) = if cfg!(target_os = "macos") {
+            ("14.0", "macos14.0", "macdict")
+        } else if cfg!(target_os = "linux") {
+            ("Ubuntu 22.04", "linux-ubuntu", "deskdict")
+        } else {
+            ("10.0", "windows10.0", "deskdict")
+        };
+
         Self {
             from_lang: "auto".to_string(),
             to_lang: "zh-CHS".to_string(),
@@ -38,14 +46,14 @@ impl Default for TranslatorSettings {
             client: "deskdict".to_string(),
             vendor: "fanyiweb_navigation".to_string(),
             input_channel: "YoudaoDict_fanyiweb_navigation".to_string(),
-            app_version: "10.3.0.0".to_string(),
+            app_version: if cfg!(target_os = "macos") { "10.3.0" } else { "10.3.0.0" }.to_string(),
             ab_test: "2".to_string(),
             model: "default".to_string(),
             screen: "1920*1080".to_string(),
-            os_version: "10.0".to_string(),
+            os_version: os_version.to_string(),
             network: "none".to_string(),
-            mid: "windows10.0".to_string(),
-            product: "deskdict".to_string(),
+            mid: mid.to_string(),
+            product: product.to_string(),
             yduuid: uuid::Uuid::new_v4().to_string().replace("-", "")[..17].to_string(),
             overlay_opacity: 0.92,
             overlay_font_scale: 1.0,

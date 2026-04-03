@@ -17,6 +17,7 @@ pub enum CaptureCommand {
         rgba: Vec<u8>,
         img_w: u32,
         img_h: u32,
+        scale_factor: f64,
         event_tx: mpsc::Sender<CaptureEvent>,
     },
     /// Display a translated result image over the selection area.
@@ -94,12 +95,14 @@ pub fn start_capture(
     rgba: Vec<u8>,
     img_w: u32,
     img_h: u32,
+    scale_factor: f64,
     event_tx: mpsc::Sender<CaptureEvent>,
 ) {
     let _ = capture_proxy().send_event(CaptureCommand::StartCapture {
         rgba,
         img_w,
         img_h,
+        scale_factor,
         event_tx,
     });
 }
@@ -117,6 +120,7 @@ enum HandlerState {
 struct CaptureSession {
     img_w: u32,
     img_h: u32,
+    scale_factor: f64,
     original_pixels: Vec<u32>,
     darkened_pixels: Vec<u32>,
     event_tx: mpsc::Sender<CaptureEvent>,
@@ -167,6 +171,7 @@ impl CaptureHandler {
         rgba: Vec<u8>,
         img_w: u32,
         img_h: u32,
+        scale_factor: f64,
         event_tx: mpsc::Sender<CaptureEvent>,
     ) {
         let attrs = Window::default_attributes()
@@ -176,6 +181,17 @@ impl CaptureHandler {
             .with_fullscreen(Some(Fullscreen::Borderless(None)))
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_visible(false);
+
+        #[cfg(target_os = "macos")]
+        let attrs = {
+            use winit::platform::macos::WindowAttributesExtMacOS;
+            // On macOS, ensure the borderless fullscreen covers the menu bar.
+            // `with_fullsize_content_view` extends content under titlebar (not needed
+            // for borderless but harmless). The key is that Borderless(None) on macOS
+            // already covers the full screen including the menu bar area.
+            attrs
+                .with_fullsize_content_view(true)
+        };
 
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
@@ -196,6 +212,7 @@ impl CaptureHandler {
         self.state = HandlerState::Selecting(CaptureSession {
             img_w,
             img_h,
+            scale_factor,
             original_pixels,
             darkened_pixels,
             event_tx,
@@ -341,11 +358,12 @@ impl ApplicationHandler<CaptureCommand> for CaptureHandler {
                 rgba,
                 img_w,
                 img_h,
+                scale_factor,
                 event_tx,
             } => {
                 // Always close any previous window before opening a new one.
                 self.close_window();
-                self.open_window(event_loop, rgba, img_w, img_h, event_tx);
+                self.open_window(event_loop, rgba, img_w, img_h, scale_factor, event_tx);
             }
 
             CaptureCommand::ShowResult {

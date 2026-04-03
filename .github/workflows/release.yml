@@ -81,6 +81,7 @@ jobs:
             artifacts/**/*.exe
             artifacts/**/*.msi
             artifacts/**/*.dmg
+            artifacts/**/*.app
             artifacts/**/*.deb
             artifacts/**/*.AppImage
           generate_release_notes: true
