@@ -19,7 +19,7 @@ pub fn find_primary_screen() -> AppResult<PrimaryMonitorInfo> {
         .find(|s| s.display_info.is_primary)
         .ok_or_else(|| AppError::Capture("no primary monitor found".into()))?;
 
-    let scale_factor = primary.display_info.scale_factor;
+    let scale_factor = primary.display_info.scale_factor as f64;
 
     Ok(PrimaryMonitorInfo {
         screen: primary,
