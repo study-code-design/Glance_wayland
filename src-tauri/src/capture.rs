@@ -78,18 +78,25 @@ fn capture_screen_to_memory_macos(_screen: Screen) -> AppResult<(Vec<u8>, u32, u
     let t0 = std::time::Instant::now();
     let output_path = std::env::temp_dir().join(format!("glance-capture-{}.png", uuid::Uuid::new_v4()));
 
-    let status = Command::new("screencapture")
+    let output = Command::new("screencapture")
         .arg("-x")
         .arg("-m")
         .arg("-t")
         .arg("png")
         .arg(&output_path)
-        .status()
+        .output()
         .map_err(|e| AppError::Capture(format!("failed to run screencapture: {e}")))?;
 
-    if !status.success() {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(AppError::Capture(format!(
-            "screencapture exited with status {status}"
+            "screencapture exited with status {}{}",
+            output.status,
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr}")
+            }
         )));
     }
 

@@ -14,8 +14,6 @@ use crate::app_state::SharedState;
 use crate::capture;
 use crate::capture_window::{self, CaptureCommand, CaptureEvent};
 use crate::error::{AppError, AppResult};
-#[cfg(target_os = "macos")]
-use crate::macos_permissions;
 use crate::models::{
     CaptureRect, CaptureTranslatePayload, CaptureViewPayload, HistoryQuery, OverlayPayload,
     SelectionPayload, TextTranslationResult, TranslationHistoryItem, TranslatorSettings,
@@ -157,21 +155,6 @@ pub async fn begin_capture(app: AppHandle, state: State<'_, SharedState>) -> App
 async fn begin_capture_impl(app: &AppHandle, state: &SharedState) -> AppResult<()> {
     if let Some(w) = app.get_webview_window(OVERLAY_WINDOW_LABEL) {
         let _ = w.close();
-    }
-
-    #[cfg(target_os = "macos")]
-    if !macos_permissions::has_screen_recording_permission() {
-        macos_permissions::request_screen_recording_permission();
-        emit_workflow_state(
-            app,
-            "需要先授予“屏幕录制”权限，然后重新打开 Glance",
-            "error",
-            false,
-        )
-        .ok();
-        return Err(AppError::Capture(
-            "screen recording permission is required on macOS".into(),
-        ));
     }
 
     let t0 = std::time::Instant::now();
