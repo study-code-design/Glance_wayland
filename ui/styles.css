@@ -290,7 +290,7 @@ body[data-mode="overlay"] {
 
 /* ── Capture window ── */
 body[data-mode="capture"] {
-  background: #000;
+  background: transparent;
   overflow: hidden;
   user-select: none;
 }
@@ -300,25 +300,21 @@ body[data-mode="capture"] {
   overflow: hidden;
   cursor: crosshair;
 }
-.capture-screen {
+.capture-dim {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: fill;
+  background: rgba(8, 10, 14, 0.38);
+  backdrop-filter: brightness(0.7);
   pointer-events: none;
-}
-.capture-screen-dim {
-  filter: brightness(0.55);
 }
 .capture-selection {
   position: absolute;
   overflow: hidden;
   border: 2px solid #4A9EFF;
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.2);
+  background: transparent;
+  box-shadow: 0 0 0 9999px rgba(8, 10, 14, 0.38), 0 0 0 1px rgba(255,255,255,0.2);
   pointer-events: none;
 }
-.capture-selection-preview,
 .capture-selection-result {
   position: absolute;
   top: 0;
@@ -330,6 +326,7 @@ body[data-mode="capture"] {
   width: 100%;
   height: 100%;
   object-fit: fill;
+  background: rgba(15, 23, 42, 0.08);
 }
 .capture-spinner {
   position: absolute;

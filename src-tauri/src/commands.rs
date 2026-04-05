@@ -540,6 +540,7 @@ fn create_capture_window(app: &AppHandle, x: i32, y: i32, width: u32, height: u3
     let window = WebviewWindowBuilder::new(app, CAPTURE_WINDOW_LABEL, url)
         .title("Capture")
         .decorations(false)
+        .transparent(true)
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)
