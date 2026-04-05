@@ -1,6 +1,8 @@
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use std::sync::mpsc;
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size, State, WebviewUrl,
     WebviewWindowBuilder,
@@ -157,6 +159,18 @@ async fn begin_capture_impl(app: &AppHandle, state: &SharedState) -> AppResult<(
 
     let t0 = std::time::Instant::now();
 
+    #[cfg(target_os = "macos")]
+    let restore_main_window = if let Some(main_window) = app.get_webview_window("main") {
+        let was_visible = main_window.is_visible().unwrap_or(false);
+        if was_visible {
+            let _ = main_window.hide();
+            tokio::time::sleep(Duration::from_millis(120)).await;
+        }
+        was_visible
+    } else {
+        false
+    };
+
     let monitor = tokio::task::spawn_blocking(capture::find_primary_screen)
         .await
         .map_err(|e| AppError::Capture(format!("find monitor task failed: {e}")))??;
@@ -199,6 +213,7 @@ async fn begin_capture_impl(app: &AppHandle, state: &SharedState) -> AppResult<(
             img_h: h,
             scale_factor,
             preview_png_base64,
+            restore_main_window,
         });
 
         create_capture_window(app, monitor_x, monitor_y, monitor_width.max(w), monitor_height.max(h))?;
@@ -379,6 +394,9 @@ async fn handle_capture_events(
 
 #[tauri::command]
 pub async fn cancel_capture(app: AppHandle, state: State<'_, SharedState>) -> AppResult<()> {
+    #[cfg(target_os = "macos")]
+    restore_main_window_if_needed(&app, state.inner()).await;
+
     reset_capture_state(state.inner()).await;
 
     #[cfg(target_os = "macos")]
@@ -438,6 +456,24 @@ pub async fn close_overlay(app: AppHandle, state: State<'_, SharedState>) -> App
 async fn reset_capture_state(state: &SharedState) {
     *state.capture_in_progress.write().await = false;
     *state.capture_session.write().await = None;
+}
+
+#[cfg(target_os = "macos")]
+async fn restore_main_window_if_needed(app: &AppHandle, state: &SharedState) {
+    let should_restore = state
+        .capture_session
+        .read()
+        .await
+        .as_ref()
+        .map(|session| session.restore_main_window)
+        .unwrap_or(false);
+
+    if should_restore {
+        if let Some(main_window) = app.get_webview_window("main") {
+            let _ = main_window.show();
+            let _ = main_window.set_focus();
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -540,7 +576,6 @@ fn create_capture_window(app: &AppHandle, x: i32, y: i32, width: u32, height: u3
     let window = WebviewWindowBuilder::new(app, CAPTURE_WINDOW_LABEL, url)
         .title("Capture")
         .decorations(false)
-        .transparent(true)
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)

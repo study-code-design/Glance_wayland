@@ -87,34 +87,38 @@ function setError(message) {
 
 function updateSelectionLayer() {
   const selectionEl = document.querySelector("#capture-selection");
+  const previewEl = document.querySelector("#capture-selection-preview");
   const resultEl = document.querySelector("#capture-selection-result");
   const spinnerEl = document.querySelector("#capture-spinner");
   const hintEl = document.querySelector("#capture-hint");
-  const dimEl = document.querySelector("#capture-dim");
 
-  if (!selectionEl || !resultEl || !spinnerEl || !hintEl || !dimEl) return;
+  if (!selectionEl || !previewEl || !resultEl || !spinnerEl || !hintEl) return;
 
   if (!state.selectionCss) {
     selectionEl.hidden = true;
-    dimEl.hidden = false;
     hintEl.textContent = "拖拽选择区域 · Esc/右键取消";
     return;
   }
 
   selectionEl.hidden = false;
-  dimEl.hidden = true;
   selectionEl.style.left = `${state.selectionCss.x}px`;
   selectionEl.style.top = `${state.selectionCss.y}px`;
   selectionEl.style.width = `${state.selectionCss.width}px`;
   selectionEl.style.height = `${state.selectionCss.height}px`;
 
+  previewEl.style.width = `${window.innerWidth}px`;
+  previewEl.style.height = `${window.innerHeight}px`;
+  previewEl.style.transform = `translate(${-state.selectionCss.x}px, ${-state.selectionCss.y}px)`;
+
   spinnerEl.hidden = !state.loading;
   if (state.resultImageBase64) {
     resultEl.src = `data:image/jpeg;base64,${state.resultImageBase64}`;
     resultEl.hidden = false;
+    previewEl.hidden = true;
     hintEl.textContent = "Esc/右键关闭截图模式，或重新拖拽选择新区域";
   } else {
     resultEl.hidden = true;
+    previewEl.hidden = false;
     hintEl.textContent = state.loading ? "正在翻译…" : "拖拽选择区域 · Esc/右键取消";
   }
 }
@@ -220,10 +224,12 @@ function bindCaptureEvents() {
 }
 
 function renderCapture() {
+  const src = `data:image/png;base64,${state.payload.imageBase64}`;
   app.innerHTML = `
     <div class="capture-root" id="capture-root">
-      <div class="capture-dim" id="capture-dim"></div>
+      <img class="capture-screen capture-screen-dim" src="${src}" alt="capture background" />
       <div class="capture-selection" id="capture-selection" hidden>
+        <img class="capture-selection-preview" id="capture-selection-preview" src="${src}" alt="capture preview" />
         <img class="capture-selection-result" id="capture-selection-result" alt="translated result" hidden />
         <div class="capture-spinner" id="capture-spinner" hidden></div>
       </div>

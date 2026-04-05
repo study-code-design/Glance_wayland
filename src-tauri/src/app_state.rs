@@ -14,6 +14,8 @@ pub struct ActiveCaptureSession {
     pub img_h: u32,
     pub scale_factor: f64,
     pub preview_png_base64: String,
+    #[cfg(target_os = "macos")]
+    pub restore_main_window: bool,
 }
 
 #[derive(Clone)]
