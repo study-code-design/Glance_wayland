@@ -287,3 +287,96 @@ body[data-mode="overlay"] {
   box-shadow: 0 4px 24px rgba(0,0,0,0.18);
   max-width: 90vw;
 }
+
+/* ── Capture window ── */
+body[data-mode="capture"] {
+  background: #000;
+  overflow: hidden;
+  user-select: none;
+}
+.capture-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  cursor: crosshair;
+}
+.capture-screen {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+.capture-screen-dim {
+  filter: brightness(0.55);
+}
+.capture-selection {
+  position: absolute;
+  overflow: hidden;
+  border: 2px solid #4A9EFF;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.2);
+  pointer-events: none;
+}
+.capture-selection-preview,
+.capture-selection-result {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+.capture-selection-result {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+.capture-spinner {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  margin-left: -22px;
+  margin-top: -22px;
+  border-radius: 999px;
+  border: 3px solid rgba(255,255,255,0.28);
+  border-top-color: #4A9EFF;
+  animation: capture-spin 0.8s linear infinite;
+}
+.capture-hint,
+.capture-error {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1;
+  color: #F9FAFB;
+  background: rgba(17, 24, 39, 0.82);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+}
+.capture-hint {
+  top: 18px;
+}
+.capture-error {
+  bottom: 22px;
+  background: rgba(185, 28, 28, 0.9);
+}
+.capture-error-screen {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: #F9FAFB;
+  background: #111827;
+  font-size: 14px;
+  text-align: center;
+}
+@keyframes capture-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

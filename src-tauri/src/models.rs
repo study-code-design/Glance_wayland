@@ -173,6 +173,30 @@ pub struct TextTranslationResult {
     pub from_lang_detected: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureViewPayload {
+    pub image_base64: String,
+    pub image_width: u32,
+    pub image_height: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureTranslatePayload {
+    pub image_base64: String,
+    pub selection: CaptureRect,
+}
+
 impl TranslationHistoryItem {
     pub fn from_response(
         selection: SelectionPayload,

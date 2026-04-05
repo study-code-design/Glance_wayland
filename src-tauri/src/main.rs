@@ -17,7 +17,8 @@ use api::YoudaoClient;
 use app_state::SharedState;
 use commands::{
     begin_capture, cancel_capture, clear_history, close_overlay, hide_window, list_history,
-    load_overlay_payload, load_settings, save_settings, show_overlay, translate_text,
+    load_capture_payload, load_overlay_payload, load_settings, save_settings, show_overlay,
+    submit_capture_selection, translate_text,
 };
 use config::ConfigStore;
 use models::TranslatorSettings;
@@ -130,6 +131,8 @@ fn main() {
             clear_history,
             begin_capture,
             cancel_capture,
+            load_capture_payload,
+            submit_capture_selection,
             show_overlay,
             load_overlay_payload,
             close_overlay,

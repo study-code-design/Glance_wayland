@@ -6,6 +6,10 @@ use crate::error::{AppError, AppResult};
 pub struct PrimaryMonitorInfo {
     pub screen: Screen,
     pub scale_factor: f64,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Find the primary monitor (fast, ~5ms). Returns the Screen handle and display info.
@@ -20,10 +24,18 @@ pub fn find_primary_screen() -> AppResult<PrimaryMonitorInfo> {
         .ok_or_else(|| AppError::Capture("no primary monitor found".into()))?;
 
     let scale_factor = primary.display_info.scale_factor as f64;
+    let x = primary.display_info.x;
+    let y = primary.display_info.y;
+    let width = primary.display_info.width;
+    let height = primary.display_info.height;
 
     Ok(PrimaryMonitorInfo {
         screen: primary,
         scale_factor,
+        x,
+        y,
+        width,
+        height,
     })
 }
 
@@ -53,4 +65,3 @@ pub fn capture_screen_to_memory(screen: Screen) -> AppResult<(Vec<u8>, u32, u32)
 
     Ok((rgba_bytes, w, h))
 }
-
