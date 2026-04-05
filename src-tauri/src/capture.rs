@@ -1,4 +1,6 @@
 use screenshots::Screen;
+#[cfg(target_os = "macos")]
+use std::{fs, process::Command};
 
 use crate::error::{AppError, AppResult};
 
@@ -41,6 +43,11 @@ pub fn find_primary_screen() -> AppResult<PrimaryMonitorInfo> {
 
 /// Capture the screen to raw RGBA bytes in memory (no file I/O).
 pub fn capture_screen_to_memory(screen: Screen) -> AppResult<(Vec<u8>, u32, u32)> {
+    #[cfg(target_os = "macos")]
+    {
+        return capture_screen_to_memory_macos(screen);
+    }
+
     let t0 = std::time::Instant::now();
     let capture = screen
         .capture()
@@ -55,6 +62,49 @@ pub fn capture_screen_to_memory(screen: Screen) -> AppResult<(Vec<u8>, u32, u32)
     let w = capture.width();
     let h = capture.height();
     let rgba_bytes = capture.into_raw();
+    tracing::info!(
+        "[PERF][capture] raw RGBA bytes: {} ({:.1} MB), {}x{}",
+        rgba_bytes.len(),
+        rgba_bytes.len() as f64 / 1_048_576.0,
+        w,
+        h
+    );
+
+    Ok((rgba_bytes, w, h))
+}
+
+#[cfg(target_os = "macos")]
+fn capture_screen_to_memory_macos(_screen: Screen) -> AppResult<(Vec<u8>, u32, u32)> {
+    let t0 = std::time::Instant::now();
+    let output_path = std::env::temp_dir().join(format!("glance-capture-{}.png", uuid::Uuid::new_v4()));
+
+    let status = Command::new("screencapture")
+        .arg("-x")
+        .arg("-m")
+        .arg("-t")
+        .arg("png")
+        .arg(&output_path)
+        .status()
+        .map_err(|e| AppError::Capture(format!("failed to run screencapture: {e}")))?;
+
+    if !status.success() {
+        return Err(AppError::Capture(format!(
+            "screencapture exited with status {status}"
+        )));
+    }
+
+    let png_bytes = fs::read(&output_path)
+        .map_err(|e| AppError::Capture(format!("failed to read screencapture output: {e}")))?;
+    let _ = fs::remove_file(&output_path);
+
+    let image = image::load_from_memory(&png_bytes)
+        .map_err(|e| AppError::Capture(format!("failed to decode screencapture output: {e}")))?
+        .into_rgba8();
+
+    tracing::info!("[PERF][capture] screencapture -m: {:?}", t0.elapsed());
+    let w = image.width();
+    let h = image.height();
+    let rgba_bytes = image.into_raw();
     tracing::info!(
         "[PERF][capture] raw RGBA bytes: {} ({:.1} MB), {}x{}",
         rgba_bytes.len(),
