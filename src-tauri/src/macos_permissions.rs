@@ -19,7 +19,9 @@ mod imp {
         if !granted {
             // Also open System Preferences as a user-friendly hint.
             Command::new("open")
-                .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+                .arg(
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                )
                 .status()
                 .ok();
         }

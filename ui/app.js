@@ -39,6 +39,31 @@ const state = {
   hotkeyRecording: false
 };
 
+function defaultSettings() {
+  return {
+    fromLang: "auto",
+    toLang: "zh-CHS",
+    clientele: "deskdict",
+    client: "deskdict",
+    vendor: "fanyiweb_navigation",
+    inputChannel: "YoudaoDict_fanyiweb_navigation",
+    appVersion: "10.3.0",
+    abTest: "2",
+    model: "default",
+    screen: "1920*1080",
+    osVersion: "14.0",
+    network: "none",
+    mid: "macos14.0",
+    product: "macdict",
+    yduuid: `web-${Date.now()}`,
+    overlayOpacity: 0.92,
+    overlayFontScale: 1,
+    closeOnOutsideClick: true,
+    autostart: false,
+    hotkey: "CommandOrControl+Shift+X"
+  };
+}
+
 /* ── Helpers ── */
 
 function escapeHtml(v) {
@@ -47,6 +72,19 @@ function escapeHtml(v) {
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function waitForNextPaint() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(resolve);
+    });
+  });
+}
+
+function setCapturePreparing(active) {
+  document.documentElement.classList.toggle("capture-preparing", active);
+  document.body.classList.toggle("capture-preparing", active);
+}
 
 function languageOptions(current) {
   return LANGUAGES.map(l =>
@@ -69,7 +107,14 @@ async function ensureTauriApi() {
   if (invoke && listen) return;
   for (let i = 0; i < 100; i++) {
     const t = window.__TAURI__;
-    if (t?.core?.invoke && t?.event?.listen) { invoke = t.core.invoke; listen = t.event.listen; return; }
+    const ti = window.__TAURI_INTERNALS__;
+    const nextInvoke = t?.core?.invoke || ti?.invoke;
+    const nextListen = t?.event?.listen || ti?.event?.listen;
+    if (nextInvoke) {
+      invoke = nextInvoke;
+      listen = nextListen || null;
+      return;
+    }
     await delay(20);
   }
   throw new Error("Tauri runtime unavailable");
@@ -80,10 +125,17 @@ async function saveSettings() { state.settings = await invoke("save_settings", {
 
 async function bindMainListeners() {
   if (state.listenersBound || mode !== "main") return;
+  if (!listen) {
+    state.listenersBound = true;
+    return;
+  }
   await listen("workflow:state", (event) => {
     const p = event.payload || {};
     state.loading = Boolean(p.busy);
     if (typeof p.message === "string") { state.status = p.message; state.statusType = p.type || ""; }
+    if (!p.busy && (!p.message || p.type === "error")) {
+      setCapturePreparing(false);
+    }
     updateOutputArea();
   });
   state.listenersBound = true;
@@ -212,14 +264,16 @@ function updateDetectedLang() {
 /* ── Actions ── */
 
 async function startCapture() {
+  if (state.loading) return;
   try {
     state.loading = true;
-    state.status = "正在截图…";
-    state.statusType = "";
-    updateOutputArea();
     await saveSettings();
+    setCapturePreparing(true);
+    document.activeElement?.blur?.();
+    await waitForNextPaint();
     await invoke("begin_capture", { options: { fromLang: state.settings.fromLang, toLang: state.settings.toLang } });
   } catch (err) {
+    setCapturePreparing(false);
     state.loading = false;
     state.status = String(err);
     state.statusType = "error";
@@ -353,11 +407,29 @@ document.addEventListener("keydown", e => {
   }
 });
 
+window.addEventListener("focus", () => {
+  if (mode === "main") {
+    setCapturePreparing(false);
+  }
+});
+
 async function boot() {
+  if (mode === "main") {
+    renderMain();
+  } else if (app) {
+    app.innerHTML = `<div class="overlay-root"><div class="capture-error-screen">正在初始化…</div></div>`;
+  }
   await ensureTauriApi();
   await bindMainListeners();
   if (mode.startsWith("overlay")) { await renderOverlay(); return; }
-  await loadSettings();
+  try {
+    await loadSettings();
+  } catch (err) {
+    console.error("load_settings failed, falling back to defaults", err);
+    state.settings = defaultSettings();
+    state.status = `设置加载失败，已使用默认配置: ${err instanceof Error ? err.message : String(err)}`;
+    state.statusType = "error";
+  }
   renderMain();
 }
 

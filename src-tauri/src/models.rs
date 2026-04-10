@@ -46,7 +46,12 @@ impl Default for TranslatorSettings {
             client: "deskdict".to_string(),
             vendor: "fanyiweb_navigation".to_string(),
             input_channel: "YoudaoDict_fanyiweb_navigation".to_string(),
-            app_version: if cfg!(target_os = "macos") { "10.3.0" } else { "10.3.0.0" }.to_string(),
+            app_version: if cfg!(target_os = "macos") {
+                "10.3.0"
+            } else {
+                "10.3.0.0"
+            }
+            .to_string(),
             ab_test: "2".to_string(),
             model: "default".to_string(),
             screen: "1920*1080".to_string(),
@@ -186,6 +191,7 @@ pub struct CaptureRect {
 #[serde(rename_all = "camelCase")]
 pub struct CaptureViewPayload {
     pub image_base64: String,
+    pub image_mime: String,
     pub image_width: u32,
     pub image_height: u32,
 }

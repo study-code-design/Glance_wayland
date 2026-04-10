@@ -10,15 +10,16 @@ mod error;
 mod google_translate;
 mod macos_permissions;
 mod models;
+mod self_test;
 
 use std::path::PathBuf;
 
 use api::YoudaoClient;
 use app_state::SharedState;
 use commands::{
-    begin_capture, cancel_capture, clear_history, close_overlay, hide_window, list_history,
-    load_capture_payload, load_overlay_payload, load_settings, save_settings, show_overlay,
-    submit_capture_selection, translate_text,
+    begin_capture, cancel_capture, capture_debug_log, clear_history, close_overlay, hide_window,
+    list_history, load_capture_payload, load_overlay_payload, load_settings, save_settings,
+    show_overlay, submit_capture_selection, translate_text,
 };
 use config::ConfigStore;
 use models::TranslatorSettings;
@@ -26,7 +27,7 @@ use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Manager,
+    Manager, RunEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tracing_subscriber::EnvFilter;
@@ -36,8 +37,45 @@ fn main() {
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
         .init();
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+    if self_test::should_run_capture_self_test() {
+        match self_test::run_capture_self_test() {
+            Ok(result) => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("capture self test result should serialize")
+                );
+                return;
+            }
+            Err(err) => {
+                eprintln!("capture self test failed: {err}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if self_test::should_run_capture_smoke_test() {
+        match self_test::run_capture_smoke_test() {
+            Ok(result) => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("capture smoke test result should serialize")
+                );
+                return;
+            }
+            Err(err) => {
+                eprintln!("capture smoke test failed: {err}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             let base_dir = app
@@ -64,7 +102,12 @@ fn main() {
                 );
                 let api_client = YoudaoClient::new(http.clone());
                 let google_client = google_translate::GoogleTranslateClient::new(http);
-                app_handle.manage(SharedState::new(config_store, settings, api_client, google_client));
+                app_handle.manage(SharedState::new(
+                    config_store,
+                    settings,
+                    api_client,
+                    google_client,
+                ));
                 Ok::<(), error::AppError>(())
             })?;
 
@@ -81,10 +124,7 @@ fn main() {
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
+                        show_main_window(app);
                     }
                     "quit" => {
                         app.exit(0);
@@ -94,11 +134,7 @@ fn main() {
                 .on_tray_icon_event(|tray, event| {
                     if let tauri::tray::TrayIconEvent::Click { button, .. } = event {
                         if button == tauri::tray::MouseButton::Left {
-                            let app = tray.app_handle();
-                            if let Some(w) = app.get_webview_window("main") {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
+                            show_main_window(&tray.app_handle());
                         }
                     }
                 })
@@ -110,7 +146,7 @@ fn main() {
             main_window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
-                    let _ = mw.hide();
+                    hide_main_window_to_background(&mw.app_handle());
                 }
             });
 
@@ -129,8 +165,42 @@ fn main() {
             load_overlay_payload,
             close_overlay,
             translate_text,
-            hide_window
+            hide_window,
+            capture_debug_log
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run tauri app");
+        .build(tauri::generate_context!())
+        .expect("failed to build tauri app");
+
+    app.run(|app_handle, event| {
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Reopen { .. } = event {
+            show_main_window(app_handle);
+        }
+    });
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = app.set_dock_visibility(true);
+
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn hide_main_window_to_background(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    let _ = app.set_dock_visibility(false);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn hide_main_window_to_background(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
 }

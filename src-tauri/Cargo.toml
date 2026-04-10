@@ -1,6 +1,6 @@
 [package]
 name = "glance"
-version = "0.2.13"
+version = "0.2.14"
 edition = "2021"
 description = "Quick screen capture & translation"
 
@@ -29,6 +29,7 @@ uuid = { version = "1.12.1", features = ["serde", "v4"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.25"
+objc2-app-kit = { version = "0.2.2", features = ["NSWindow"] }
 xcap = "0.9"
 
 [features]

@@ -13,6 +13,25 @@
 html, body { width: 100%; height: 100%; background: var(--bg-app); color: var(--text-main); }
 button, select, input, textarea { font: inherit; }
 
+html.capture-preparing,
+html.capture-preparing body,
+body.capture-preparing {
+  background: transparent !important;
+}
+
+body.capture-preparing #app,
+body.capture-preparing .bento-app {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+body.capture-preparing *,
+body.capture-preparing *::before,
+body.capture-preparing *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
 /* ── Bento container ── */
 .bento-app {
   width: 100%;
@@ -359,7 +378,8 @@ body[data-mode="capture"] {
   pointer-events: none;
 }
 .capture-hint {
-  top: 18px;
+  top: auto;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 72px);
 }
 .capture-error {
   bottom: 22px;

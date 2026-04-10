@@ -189,8 +189,7 @@ impl CaptureHandler {
             // `with_fullsize_content_view` extends content under titlebar (not needed
             // for borderless but harmless). The key is that Borderless(None) on macOS
             // already covers the full screen including the menu bar area.
-            attrs
-                .with_fullsize_content_view(true)
+            attrs.with_fullsize_content_view(true)
         };
 
         let window = match event_loop.create_window(attrs) {
@@ -233,9 +232,7 @@ impl CaptureHandler {
         // Windows does not send WM_SIZE to invisible windows, so we must resize
         // the surface ourselves using the known screenshot dimensions.
         if let HandlerState::Selecting(ref mut session) = self.state {
-            if let (Some(nz_w), Some(nz_h)) =
-                (NonZeroU32::new(img_w), NonZeroU32::new(img_h))
-            {
+            if let (Some(nz_w), Some(nz_h)) = (NonZeroU32::new(img_w), NonZeroU32::new(img_h)) {
                 if session.surface.resize(nz_w, nz_h).is_ok() {
                     session.surface_ready = true;
                     if let Ok(mut buffer) = session.surface.buffer_mut() {
@@ -289,7 +286,9 @@ impl ApplicationHandler<CaptureCommand> for CaptureHandler {
                 redraw_session(session);
             }
 
-            WindowEvent::KeyboardInput { event: key_event, .. } => {
+            WindowEvent::KeyboardInput {
+                event: key_event, ..
+            } => {
                 use winit::keyboard::{KeyCode, PhysicalKey};
                 if key_event.state == ElementState::Pressed {
                     if let PhysicalKey::Code(KeyCode::Escape) = key_event.physical_key {
@@ -429,7 +428,18 @@ fn redraw_session(session: &mut CaptureSession) {
     // If there's a result overlay, paint it on top.
     if let Some(ref res) = session.result {
         // res.pixels is a compact res.w×res.h image — stride equals res.w, offset (0,0).
-        blit_pixels(&mut buffer, width, &res.pixels, res.w, 0, 0, res.x, res.y, res.w, res.h);
+        blit_pixels(
+            &mut buffer,
+            width,
+            &res.pixels,
+            res.w,
+            0,
+            0,
+            res.x,
+            res.y,
+            res.w,
+            res.h,
+        );
         let _ = buffer.present();
         return;
     }
@@ -466,7 +476,8 @@ fn redraw_session(session: &mut CaptureSession) {
     // Loading spinner overlay.
     if session.loading {
         if let Some((sx, sy, sw, sh)) = session.selection {
-            let elapsed = session.loading_start
+            let elapsed = session
+                .loading_start
                 .map(|t| t.elapsed().as_secs_f32())
                 .unwrap_or(0.0);
             draw_spinner(&mut buffer, width, height, sx, sy, sw, sh, elapsed);
@@ -487,7 +498,9 @@ fn redraw_session(session: &mut CaptureSession) {
 fn finish_selection(session: &CaptureSession) {
     if let Some((x, y, w, h)) = session.selection {
         if w > 4 && h > 4 {
-            let _ = session.event_tx.send(CaptureEvent::Selection { x, y, w, h });
+            let _ = session
+                .event_tx
+                .send(CaptureEvent::Selection { x, y, w, h });
         }
     }
 }
@@ -653,9 +666,8 @@ pub fn crop_rgba(rgba: &[u8], img_w: u32, x: u32, y: u32, w: u32, h: u32) -> Vec
 
 pub fn encode_png(rgba: &[u8], w: u32, h: u32) -> crate::error::AppResult<Vec<u8>> {
     use image::{ImageBuffer, RgbaImage};
-    let img: RgbaImage = ImageBuffer::from_raw(w, h, rgba.to_vec()).ok_or_else(|| {
-        crate::error::AppError::Capture("invalid RGBA dimensions for PNG".into())
-    })?;
+    let img: RgbaImage = ImageBuffer::from_raw(w, h, rgba.to_vec())
+        .ok_or_else(|| crate::error::AppError::Capture("invalid RGBA dimensions for PNG".into()))?;
     let mut png_bytes: Vec<u8> = Vec::new();
     img.write_to(
         &mut std::io::Cursor::new(&mut png_bytes),

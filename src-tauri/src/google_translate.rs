@@ -62,7 +62,9 @@ impl GoogleTranslateClient {
             .to_string();
 
         if translated.is_empty() {
-            return Err(AppError::Api("Google Translate returned empty result".into()));
+            return Err(AppError::Api(
+                "Google Translate returned empty result".into(),
+            ));
         }
 
         Ok(TextTranslationResult {

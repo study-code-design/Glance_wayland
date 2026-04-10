@@ -14,8 +14,6 @@ use crate::app_state::SharedState;
 use crate::capture;
 use crate::capture_window::{self, CaptureCommand, CaptureEvent};
 use crate::error::{AppError, AppResult};
-#[cfg(target_os = "macos")]
-use crate::macos_permissions;
 use crate::models::{
     CaptureRect, CaptureTranslatePayload, CaptureViewPayload, HistoryQuery, OverlayPayload,
     SelectionPayload, TextTranslationResult, TranslationHistoryItem, TranslatorSettings,
@@ -69,15 +67,18 @@ pub fn apply_hotkey(app: &AppHandle, hotkey: &str) {
         return;
     }
     let app_clone = app.clone();
-    if let Err(e) = app.global_shortcut().on_shortcut(hotkey, move |_app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            let app2 = app_clone.clone();
-            tauri::async_runtime::spawn(async move {
-                let state: State<'_, SharedState> = app2.state();
-                let _ = crate::commands::begin_capture(app2.clone(), state).await;
-            });
-        }
-    }) {
+    if let Err(e) = app
+        .global_shortcut()
+        .on_shortcut(hotkey, move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                let app2 = app_clone.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state: State<'_, SharedState> = app2.state();
+                    let _ = crate::commands::begin_capture(app2.clone(), state).await;
+                });
+            }
+        })
+    {
         tracing::warn!("global shortcut register failed for '{hotkey}': {e}");
     }
 }
@@ -122,7 +123,10 @@ pub async fn translate_text(
     from_lang: String,
     to_lang: String,
 ) -> AppResult<TextTranslationResult> {
-    state.google_client.translate(&text, &from_lang, &to_lang).await
+    state
+        .google_client
+        .translate(&text, &from_lang, &to_lang)
+        .await
 }
 
 // ── Window ──────────────────────────────────────────────────────────────────
@@ -132,6 +136,15 @@ pub async fn hide_window(app: AppHandle) -> AppResult<()> {
     if let Some(w) = app.get_webview_window("main") {
         w.hide()?;
     }
+    #[cfg(target_os = "macos")]
+    app.set_dock_visibility(false)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn capture_debug_log(message: String) -> AppResult<()> {
+    #[cfg(target_os = "macos")]
+    capture::debug_log(format!("[timeline][ui] {message}"));
     Ok(())
 }
 
@@ -163,27 +176,23 @@ async fn begin_capture_impl(app: &AppHandle, state: &SharedState) -> AppResult<(
     {
         let dir = capture::debug_reset_dir()?;
         capture::debug_log(format!("[begin] debug dir={}", dir.display()));
-        let has_permission = macos_permissions::has_screen_recording_permission();
-        capture::debug_log(format!("[begin] preflight permission={has_permission}"));
-        if !has_permission {
-            let requested = macos_permissions::request_screen_recording_permission();
-            capture::debug_log(format!("[begin] request permission returned={requested}"));
-            return Err(AppError::Capture(
-                "screen recording permission is required on macOS. Grant it in System Settings, then reopen Glance.".into(),
-            ));
-        }
     }
 
     let t0 = std::time::Instant::now();
+    #[cfg(target_os = "macos")]
+    capture_timeline(&t0, "begin_capture_impl entered");
 
     #[cfg(target_os = "macos")]
     let restore_main_window = if let Some(main_window) = app.get_webview_window("main") {
         let was_visible = main_window.is_visible().unwrap_or(false);
-        capture::debug_log(format!("[begin] main window visible before capture={was_visible}"));
+        capture::debug_log(format!(
+            "[begin] main window visible before capture={was_visible}"
+        ));
         if was_visible {
             let _ = main_window.hide();
-            tokio::time::sleep(Duration::from_millis(120)).await;
-            capture::debug_log("[begin] hid main window and waited 120ms");
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            capture::debug_log("[begin] hid main window and waited 40ms");
+            capture_timeline(&t0, "main window hidden");
         }
         was_visible
     } else {
@@ -191,76 +200,122 @@ async fn begin_capture_impl(app: &AppHandle, state: &SharedState) -> AppResult<(
         false
     };
 
-    let monitor = tokio::task::spawn_blocking(capture::find_primary_screen)
-        .await
-        .map_err(|e| AppError::Capture(format!("find monitor task failed: {e}")))??;
-
-    tracing::info!(
-        "[PERF] find_primary_screen: {:?} (scale={})",
-        t0.elapsed(),
-        monitor.scale_factor
-    );
-    #[cfg(target_os = "macos")]
-    capture::debug_log(format!(
-        "[begin] primary monitor x={} y={} width={} height={} scale_factor={}",
-        monitor.x, monitor.y, monitor.width, monitor.height, monitor.scale_factor
-    ));
-
-    let scale_factor = monitor.scale_factor;
-    #[cfg(target_os = "macos")]
-    let monitor_x = monitor.x;
-    #[cfg(target_os = "macos")]
-    let monitor_y = monitor.y;
-    #[cfg(target_os = "macos")]
-    let monitor_width = monitor.width;
-    #[cfg(target_os = "macos")]
-    let monitor_height = monitor.height;
-    let screen = monitor.screen;
-
-    let (rgba, w, h) = tokio::task::spawn_blocking(move || capture::capture_screen_to_memory(screen))
-        .await
-        .map_err(|e| AppError::Capture(format!("capture task failed: {e}")))??;
-
-    tracing::info!(
-        "[PERF] capture_to_memory: {:?} | {}x{} ({:.1} MB RGBA)",
-        t0.elapsed(),
-        w,
-        h,
-        rgba.len() as f64 / 1_048_576.0
-    );
-    #[cfg(target_os = "macos")]
-    capture::debug_log(format!(
-        "[begin] capture_to_memory -> {}x{} rgba_bytes={}",
-        w,
-        h,
-        rgba.len()
-    ));
-
     #[cfg(target_os = "macos")]
     {
-        let preview_png_base64 = build_capture_preview_base64(rgba.clone(), w, h).await?;
+        let monitor = tokio::task::spawn_blocking(capture::find_primary_screen)
+            .await
+            .map_err(|e| AppError::Capture(format!("find monitor task failed: {e}")))??;
+
+        tracing::info!(
+            "[PERF] find_primary_screen: {:?} (scale={})",
+            t0.elapsed(),
+            monitor.scale_factor
+        );
+        capture::debug_log(format!(
+            "[begin] primary monitor x={} y={} width={} height={} scale_factor={}",
+            monitor.x, monitor.y, monitor.width, monitor.height, monitor.scale_factor
+        ));
+        capture_timeline(&t0, "primary monitor resolved");
+
+        let scale_factor = monitor.scale_factor;
+        let screen = monitor.screen;
+
+        let captured = tokio::task::spawn_blocking(move || capture::capture_screen_with_preview(screen))
+            .await
+            .map_err(|e| AppError::Capture(format!("capture task failed: {e}")))??;
+        let rgba = captured.rgba_bytes;
+        let w = captured.width;
+        let h = captured.height;
+
+        tracing::info!(
+            "[PERF] capture_to_memory: {:?} | {}x{} ({:.1} MB RGBA)",
+            t0.elapsed(),
+            w,
+            h,
+            rgba.len() as f64 / 1_048_576.0
+        );
+        capture::debug_log(format!(
+            "[begin] capture_to_memory -> {}x{} rgba_bytes={} scale_factor={}",
+            w,
+            h,
+            rgba.len(),
+            scale_factor
+        ));
+        capture_timeline(&t0, format!("screen capture ready {}x{}", w, h));
+
+        let preview_started = std::time::Instant::now();
+        let (preview_image_base64, preview_image_mime) =
+            build_capture_preview_base64(captured.preview_bytes, captured.preview_mime);
+        capture::debug_log(format!(
+            "[preview] ready after {:?}",
+            preview_started.elapsed()
+        ));
+        capture_timeline(
+            &t0,
+            format!(
+                "preview payload ready mime={} base64_chars={}",
+                preview_image_mime,
+                preview_image_base64.len()
+            ),
+        );
+
+        // Tauri's physical window APIs expect device pixels. The monitor geometry
+        // reported above is in macOS points, so convert before sizing the capture
+        // window or it appears as a smaller corner window on Retina displays.
+        let window_x = ((monitor.x as f64) * scale_factor).round() as i32;
+        let window_y = ((monitor.y as f64) * scale_factor).round() as i32;
+        let window_width = w;
+        let window_height = h;
+
+        capture::debug_log(format!(
+            "[begin] opening capture window physical x={} y={} width={} height={} logical={}x{}",
+            window_x, window_y, window_width, window_height, monitor.width, monitor.height
+        ));
+
         *state.capture_session.write().await = Some(crate::app_state::ActiveCaptureSession {
             rgba,
             img_w: w,
             img_h: h,
             scale_factor,
-            preview_png_base64,
+            preview_image_base64: Some(preview_image_base64),
+            preview_image_mime,
             restore_main_window,
         });
+        capture_timeline(&t0, "capture session stored");
 
-        create_capture_window(app, monitor_x, monitor_y, monitor_width.max(w), monitor_height.max(h))?;
-        capture::debug_log(format!(
-            "[begin] capture window shown at x={} y={} width={} height={}",
-            monitor_x,
-            monitor_y,
-            monitor_width.max(w),
-            monitor_height.max(h)
-        ));
-        tracing::info!("[PERF] start_capture_webview: {:?}", t0.elapsed());
+        create_capture_window(app, window_x, window_y, window_width, window_height)?;
+        capture_timeline(&t0, "capture window created");
+        emit_workflow_state(app, "请框选需要翻译的区域", "", false)?;
     }
 
     #[cfg(not(target_os = "macos"))]
     {
+        let monitor = tokio::task::spawn_blocking(capture::find_primary_screen)
+            .await
+            .map_err(|e| AppError::Capture(format!("find monitor task failed: {e}")))??;
+
+        tracing::info!(
+            "[PERF] find_primary_screen: {:?} (scale={})",
+            t0.elapsed(),
+            monitor.scale_factor
+        );
+
+        let scale_factor = monitor.scale_factor;
+        let screen = monitor.screen;
+
+        let (rgba, w, h) =
+            tokio::task::spawn_blocking(move || capture::capture_screen_to_memory(screen))
+                .await
+                .map_err(|e| AppError::Capture(format!("capture task failed: {e}")))??;
+
+        tracing::info!(
+            "[PERF] capture_to_memory: {:?} | {}x{} ({:.1} MB RGBA)",
+            t0.elapsed(),
+            w,
+            h,
+            rgba.len() as f64 / 1_048_576.0
+        );
+
         let (event_tx, event_rx) = mpsc::channel::<CaptureEvent>();
         capture_window::start_capture(rgba.clone(), w, h, scale_factor, event_tx);
         tracing::info!("[PERF] start_capture_native: {:?}", t0.elapsed());
@@ -272,6 +327,7 @@ async fn begin_capture_impl(app: &AppHandle, state: &SharedState) -> AppResult<(
         });
     }
 
+    #[cfg(not(target_os = "macos"))]
     emit_workflow_state(app, "请框选需要翻译的区域", "", false)?;
     Ok(())
 }
@@ -283,8 +339,23 @@ pub async fn load_capture_payload(state: State<'_, SharedState>) -> AppResult<Ca
         .as_ref()
         .ok_or_else(|| AppError::Capture("capture payload missing".into()))?;
 
+    let image_base64 = session
+        .preview_image_base64
+        .clone()
+        .ok_or_else(|| AppError::Capture("capture preview not ready".into()))?;
+
+    #[cfg(target_os = "macos")]
+    capture::debug_log(format!(
+        "[timeline][backend] load_capture_payload ready mime={} size={}x{} base64_chars={}",
+        session.preview_image_mime,
+        session.img_w,
+        session.img_h,
+        image_base64.len()
+    ));
+
     Ok(CaptureViewPayload {
-        image_base64: session.preview_png_base64.clone(),
+        image_base64,
+        image_mime: session.preview_image_mime.clone(),
         image_width: session.img_w,
         image_height: session.img_h,
     })
@@ -414,14 +485,15 @@ async fn handle_capture_events(
 
                                     match rgba_result {
                                         Ok(Ok((result_rgba, rw, rh))) => {
-                                            let _ = capture_window::capture_proxy()
-                                                .send_event(CaptureCommand::ShowResult {
+                                            let _ = capture_window::capture_proxy().send_event(
+                                                CaptureCommand::ShowResult {
                                                     rgba_bytes: result_rgba,
                                                     x,
                                                     y,
                                                     w: rw,
                                                     h: rh,
-                                                });
+                                                },
+                                            );
                                         }
                                         Ok(Err(e)) => tracing::warn!("JPEG decode: {e}"),
                                         Err(e) => tracing::warn!("spawn_blocking JPEG: {e}"),
@@ -456,17 +528,18 @@ pub async fn cancel_capture(app: AppHandle, state: State<'_, SharedState>) -> Ap
 
     reset_capture_state(state.inner()).await;
 
-    #[cfg(target_os = "macos")]
-    if let Some(w) = app.get_webview_window(CAPTURE_WINDOW_LABEL) {
-        let _ = w.close();
-    }
-
+    let _ = close_capture_window(&app);
     #[cfg(not(target_os = "macos"))]
-    {
-        let _ = capture_window::capture_proxy().send_event(CaptureCommand::Close);
-    }
+    let _ = capture_window::capture_proxy().send_event(CaptureCommand::Close);
 
     emit_workflow_state(&app, "", "", false)?;
+    Ok(())
+}
+
+fn close_capture_window(app: &AppHandle) -> AppResult<()> {
+    if let Some(w) = app.get_webview_window(CAPTURE_WINDOW_LABEL) {
+        w.hide()?;
+    }
     Ok(())
 }
 
@@ -528,6 +601,9 @@ async fn restore_main_window_if_needed(app: &AppHandle, state: &SharedState) {
         .unwrap_or(false);
 
     if should_restore {
+        #[cfg(target_os = "macos")]
+        let _ = app.set_dock_visibility(true);
+
         if let Some(main_window) = app.get_webview_window("main") {
             let _ = main_window.show();
             let _ = main_window.set_focus();
@@ -537,18 +613,28 @@ async fn restore_main_window_if_needed(app: &AppHandle, state: &SharedState) {
 }
 
 #[cfg(target_os = "macos")]
-async fn build_capture_preview_base64(rgba: Vec<u8>, w: u32, h: u32) -> AppResult<String> {
-    let png_bytes = tokio::task::spawn_blocking(move || capture_window::encode_png(&rgba, w, h))
-        .await
-        .map_err(|e| AppError::Capture(format!("preview encode task failed: {e}")))??;
-    capture::debug_write_bytes("02_preview.png", &png_bytes);
+fn build_capture_preview_base64(preview_bytes: Vec<u8>, preview_mime: &str) -> (String, String) {
+    let extension = preview_mime
+        .split('/')
+        .nth(1)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("bin");
+    capture::debug_write_bytes(&format!("02_preview.{extension}"), &preview_bytes);
     capture::debug_log(format!(
-        "[preview] encoded preview png width={} height={} bytes={}",
-        w,
-        h,
-        png_bytes.len()
+        "[preview] reused capture preview mime={} bytes={}",
+        preview_mime,
+        preview_bytes.len()
     ));
-    Ok(BASE64_STANDARD.encode(png_bytes))
+    (BASE64_STANDARD.encode(preview_bytes), preview_mime.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_timeline(started: &std::time::Instant, message: impl AsRef<str>) {
+    capture::debug_log(format!(
+        "[timeline][backend] +{}ms {}",
+        started.elapsed().as_millis(),
+        message.as_ref()
+    ));
 }
 
 async fn encode_cropped_png(crop: Vec<u8>, w: u32, h: u32) -> AppResult<Vec<u8>> {
@@ -648,9 +734,29 @@ fn decode_jpeg_to_rgba(jpeg_bytes: &[u8]) -> AppResult<(Vec<u8>, u32, u32)> {
 }
 
 #[cfg(target_os = "macos")]
-fn create_capture_window(app: &AppHandle, x: i32, y: i32, width: u32, height: u32) -> AppResult<()> {
+fn create_capture_window(
+    app: &AppHandle,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> AppResult<()> {
+    #[cfg(target_os = "macos")]
+    let t0 = std::time::Instant::now();
+
     if let Some(w) = app.get_webview_window(CAPTURE_WINDOW_LABEL) {
-        let _ = w.close();
+        w.set_position(Position::Physical(PhysicalPosition::new(x, y)))?;
+        w.set_size(Size::Physical(PhysicalSize::new(width, height)))?;
+        let _ = w.set_visible_on_all_workspaces(true);
+        let _ = w.eval("window.location.reload()");
+        w.show()?;
+        configure_capture_window_macos(&w)?;
+        w.set_focus()?;
+        capture::debug_log(format!(
+            "[timeline][backend][window] +{}ms reused existing capture window",
+            t0.elapsed().as_millis()
+        ));
+        return Ok(());
     }
 
     let url = WebviewUrl::App("capture.html".into());
@@ -659,22 +765,112 @@ fn create_capture_window(app: &AppHandle, x: i32, y: i32, width: u32, height: u3
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
+        .shadow(false)
         .resizable(false)
         .focused(true)
         .visible(false)
         .position(0.0, 0.0)
-        .inner_size(width as f64, height as f64)
+        .inner_size(100.0, 100.0)
         .build()?;
+    #[cfg(target_os = "macos")]
+    capture::debug_log(format!(
+        "[timeline][backend][window] +{}ms builder finished",
+        t0.elapsed().as_millis()
+    ));
     window.set_position(Position::Physical(PhysicalPosition::new(x, y)))?;
+    #[cfg(target_os = "macos")]
+    capture::debug_log(format!(
+        "[timeline][backend][window] +{}ms position set x={} y={}",
+        t0.elapsed().as_millis(),
+        x,
+        y
+    ));
     window.set_size(Size::Physical(PhysicalSize::new(width, height)))?;
     #[cfg(target_os = "macos")]
+    capture::debug_log(format!(
+        "[timeline][backend][window] +{}ms size set {}x{}",
+        t0.elapsed().as_millis(),
+        width,
+        height
+    ));
+    #[cfg(target_os = "macos")]
     let _ = window.set_visible_on_all_workspaces(true);
+    #[cfg(target_os = "macos")]
+    capture::debug_log(format!(
+        "[timeline][backend][window] +{}ms visible_on_all_workspaces set",
+        t0.elapsed().as_millis()
+    ));
     window.show()?;
+    #[cfg(target_os = "macos")]
+    capture::debug_log(format!(
+        "[timeline][backend][window] +{}ms window shown",
+        t0.elapsed().as_millis()
+    ));
+    #[cfg(target_os = "macos")]
+    configure_capture_window_macos(&window)?;
     window.set_focus()?;
+    #[cfg(target_os = "macos")]
+    capture::debug_log(format!(
+        "[timeline][backend][window] +{}ms window focused",
+        t0.elapsed().as_millis()
+    ));
     Ok(())
 }
 
-fn create_overlay_window(app: &AppHandle, x: i32, y: i32, width: u32, height: u32) -> AppResult<()> {
+#[cfg(target_os = "macos")]
+fn configure_capture_window_macos(window: &tauri::WebviewWindow) -> AppResult<()> {
+    use objc2_app_kit::{NSMainMenuWindowLevel, NSWindow, NSWindowCollectionBehavior};
+
+    let (tx, rx) = mpsc::sync_channel(1);
+    let dispatcher = window.clone();
+    let window = window.clone();
+    let t0 = std::time::Instant::now();
+
+    dispatcher.run_on_main_thread(move || {
+        let result = (|| -> Result<(), String> {
+            let raw = window.ns_window().map_err(|e| e.to_string())?;
+            unsafe {
+                let ns_window: &NSWindow = &*raw.cast();
+                let mut behavior = ns_window.collectionBehavior();
+                behavior |= NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::Stationary
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary;
+                ns_window.setCollectionBehavior(behavior);
+                ns_window.setLevel(NSMainMenuWindowLevel + 1);
+                ns_window.setCanHide(false);
+                ns_window.setHidesOnDeactivate(false);
+                ns_window.orderFrontRegardless();
+            }
+            Ok(())
+        })();
+
+        let _ = tx.send(result);
+    })?;
+
+    match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(Ok(())) => {
+            capture::debug_log(format!(
+                "[begin] promoted capture window above menu bar in {}ms",
+                t0.elapsed().as_millis()
+            ));
+            Ok(())
+        }
+        Ok(Err(err)) => Err(AppError::Capture(format!(
+            "failed to configure macOS capture window: {err}"
+        ))),
+        Err(err) => Err(AppError::Capture(format!(
+            "timed out configuring macOS capture window: {err}"
+        ))),
+    }
+}
+
+fn create_overlay_window(
+    app: &AppHandle,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> AppResult<()> {
     if let Some(w) = app.get_webview_window(OVERLAY_WINDOW_LABEL) {
         w.set_position(Position::Physical(PhysicalPosition::new(x, y)))?;
         w.set_size(Size::Physical(PhysicalSize::new(width, height)))?;

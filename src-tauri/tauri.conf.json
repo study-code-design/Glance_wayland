@@ -1,9 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Glance",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "identifier": "com.harukaon.glance",
   "build": {
+    "beforeDevCommand": "python3 -m http.server 1420 --directory ./ui",
+    "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../ui"
   },
   "app": {

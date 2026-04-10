@@ -13,7 +13,8 @@ pub struct ActiveCaptureSession {
     pub img_w: u32,
     pub img_h: u32,
     pub scale_factor: f64,
-    pub preview_png_base64: String,
+    pub preview_image_base64: Option<String>,
+    pub preview_image_mime: String,
     #[cfg(target_os = "macos")]
     pub restore_main_window: bool,
 }

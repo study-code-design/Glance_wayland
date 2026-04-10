@@ -11,9 +11,13 @@ const state = {
   selectionCss: null,
   selectionImage: null,
   loading: false,
+  previewReady: false,
   resultImageBase64: "",
   error: ""
 };
+
+const bootStartedAt = performance.now();
+let timelineSeq = 0;
 
 function escapeHtml(v) {
   return String(v).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
@@ -22,6 +26,22 @@ function escapeHtml(v) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function debugTimeline(message) {
+  if (!invoke) return;
+  const elapsed = (performance.now() - bootStartedAt).toFixed(1);
+  const seq = ++timelineSeq;
+  try {
+    await invoke("capture_debug_log", {
+      message: `#${seq} +${elapsed}ms ${message}`
+    });
+  } catch (_err) {
+  }
+}
+
+function debugTimelineSoon(message) {
+  void debugTimeline(message);
 }
 
 function renderFatal(msg) {
@@ -85,6 +105,32 @@ function setError(message) {
   errorEl.textContent = state.error;
 }
 
+function updatePreviewImages() {
+  const screenEl = document.querySelector("#capture-screen");
+  const previewEl = document.querySelector("#capture-selection-preview");
+  const hintEl = document.querySelector("#capture-hint");
+  if (!screenEl || !previewEl || !hintEl) return;
+
+  if (!state.payload) {
+    screenEl.removeAttribute("src");
+    previewEl.removeAttribute("src");
+    hintEl.textContent = "正在准备截图… · Esc/右键取消";
+    return;
+  }
+
+  const src = `data:${state.payload.imageMime};base64,${state.payload.imageBase64}`;
+  if (screenEl.dataset.debugSrc !== src) {
+    screenEl.dataset.debugSrc = src;
+    debugTimelineSoon(`screen image src assigned mime=${state.payload.imageMime} size=${state.payload.imageWidth}x${state.payload.imageHeight}`);
+  }
+  screenEl.src = src;
+  previewEl.src = src;
+  state.previewReady = true;
+  if (!state.selectionCss && !state.loading) {
+    hintEl.textContent = "拖拽选择区域 · Esc/右键取消";
+  }
+}
+
 function updateSelectionLayer() {
   const selectionEl = document.querySelector("#capture-selection");
   const previewEl = document.querySelector("#capture-selection-preview");
@@ -96,7 +142,7 @@ function updateSelectionLayer() {
 
   if (!state.selectionCss) {
     selectionEl.hidden = true;
-    hintEl.textContent = "拖拽选择区域 · Esc/右键取消";
+    hintEl.textContent = state.previewReady ? "拖拽选择区域 · Esc/右键取消" : "正在准备截图… · Esc/右键取消";
     return;
   }
 
@@ -178,7 +224,7 @@ function bindCaptureEvents() {
   });
 
   root.addEventListener("mousedown", (event) => {
-    if (event.button !== 0 || state.loading) return;
+    if (event.button !== 0 || state.loading || !state.previewReady) return;
     state.dragging = true;
     state.dragStart = pointFromEvent(event);
     state.dragCurrent = state.dragStart;
@@ -224,29 +270,68 @@ function bindCaptureEvents() {
 }
 
 function renderCapture() {
-  const src = `data:image/png;base64,${state.payload.imageBase64}`;
   app.innerHTML = `
     <div class="capture-root" id="capture-root">
-      <img class="capture-screen capture-screen-dim" src="${src}" alt="capture background" />
+      <img class="capture-screen capture-screen-dim" id="capture-screen" alt="" />
       <div class="capture-selection" id="capture-selection" hidden>
-        <img class="capture-selection-preview" id="capture-selection-preview" src="${src}" alt="capture preview" />
-        <img class="capture-selection-result" id="capture-selection-result" alt="translated result" hidden />
+        <img class="capture-selection-preview" id="capture-selection-preview" alt="" />
+        <img class="capture-selection-result" id="capture-selection-result" alt="" hidden />
         <div class="capture-spinner" id="capture-spinner" hidden></div>
       </div>
-      <div class="capture-hint" id="capture-hint">拖拽选择区域 · Esc/右键取消</div>
+      <div class="capture-hint" id="capture-hint">正在准备截图… · Esc/右键取消</div>
       <div class="capture-error" id="capture-error" hidden></div>
     </div>`;
 
+  const screenEl = document.querySelector("#capture-screen");
+  if (screenEl) {
+    screenEl.addEventListener("load", () => {
+      debugTimelineSoon(`screen image load natural=${screenEl.naturalWidth}x${screenEl.naturalHeight}`);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          debugTimelineSoon("screen image painted");
+        });
+      });
+    });
+  }
+
   bindCaptureEvents();
+  updatePreviewImages();
   updateSelectionLayer();
 }
 
 async function boot() {
   await ensureTauriApi();
-  state.payload = await invoke("load_capture_payload");
+  await debugTimeline("tauri api ready");
   renderCapture();
+  debugTimelineSoon("capture DOM rendered");
+  const payloadStartedAt = performance.now();
+  for (let i = 0; i < 200; i++) {
+    try {
+      state.payload = await invoke("load_capture_payload");
+      debugTimelineSoon(`load_capture_payload success attempts=${i + 1} wait=${(performance.now() - payloadStartedAt).toFixed(1)}ms`);
+      updatePreviewImages();
+      break;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes("capture preview not ready") && !message.includes("capture payload missing")) {
+        throw err;
+      }
+      await delay(25);
+    }
+  }
+  if (!state.payload) {
+    throw new Error("capture preview timed out");
+  }
+  debugTimelineSoon("capture payload applied");
 }
 
-window.addEventListener("error", (event) => renderFatal(event.error?.message || event.message || "unknown"));
-window.addEventListener("unhandledrejection", (event) => renderFatal(event.reason instanceof Error ? event.reason.message : String(event.reason)));
+window.addEventListener("error", (event) => {
+  debugTimelineSoon(`window error ${event.error?.message || event.message || "unknown"}`);
+  renderFatal(event.error?.message || event.message || "unknown");
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
+  debugTimelineSoon(`unhandled rejection ${reason}`);
+  renderFatal(reason);
+});
 boot().catch((err) => renderFatal(err instanceof Error ? err.message : String(err)));
