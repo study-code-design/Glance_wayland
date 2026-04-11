@@ -20,7 +20,6 @@ use crate::models::{
 };
 
 const OVERLAY_WINDOW_LABEL: &str = "overlay";
-#[cfg(target_os = "macos")]
 const CAPTURE_WINDOW_LABEL: &str = "capture";
 
 // ── Settings ────────────────────────────────────────────────────────────────
@@ -144,11 +143,12 @@ pub async fn hide_window(app: AppHandle) -> AppResult<()> {
 fn instant_hide(window: &tauri::WebviewWindow) {
     #[cfg(target_os = "macos")]
     {
+        use objc2_app_kit::{NSWindow, NSWindowAnimationBehavior};
         if let Ok(raw) = window.ns_window() {
             unsafe {
-                let ns_window: &objc2_app_kit::NSWindow = &*raw.cast();
+                let ns_window: &NSWindow = &*raw.cast();
                 // 2 is NSWindowAnimationBehaviorNone
-                ns_window.setAnimationBehavior(objc2_app_kit::NSWindowAnimationBehavior(2));
+                ns_window.setAnimationBehavior(NSWindowAnimationBehavior(2));
             }
         }
     }
@@ -157,6 +157,7 @@ fn instant_hide(window: &tauri::WebviewWindow) {
 
 #[tauri::command]
 pub async fn capture_debug_log(message: String) -> AppResult<()> {
+    let _ = &message;
     #[cfg(target_os = "macos")]
     capture::debug_log(format!("[timeline][ui] {message}"));
     Ok(())

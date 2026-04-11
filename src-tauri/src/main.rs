@@ -26,7 +26,7 @@ use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Manager, RunEvent,
+    Manager,
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tracing_subscriber::EnvFilter;
@@ -170,10 +170,10 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build tauri app");
 
-    app.run(|app_handle, event| {
+    app.run(|_app_handle, _event| {
         #[cfg(target_os = "macos")]
-        if let RunEvent::Reopen { .. } = event {
-            show_main_window(app_handle);
+        if let tauri::RunEvent::Reopen { .. } = _event {
+            show_main_window(_app_handle);
         }
     });
 }
