@@ -63,6 +63,7 @@ jobs:
 
   release:
     needs: build
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
