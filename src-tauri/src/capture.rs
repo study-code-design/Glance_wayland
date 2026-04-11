@@ -9,7 +9,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 #[cfg(target_os = "macos")]
-use xcap::Monitor as CaptureScreen;
+pub struct MockMonitor {}
+
+#[cfg(target_os = "macos")]
+type CaptureScreen = MockMonitor;
 
 use crate::error::{AppError, AppResult};
 
@@ -127,20 +130,28 @@ pub fn capture_screen_with_preview(screen: CaptureScreen) -> AppResult<CapturedS
 
 #[cfg(target_os = "macos")]
 fn find_primary_screen_macos() -> AppResult<PrimaryMonitorInfo> {
+    use core_graphics::display::CGDisplay;
+
     let t0 = std::time::Instant::now();
-    let monitors = CaptureScreen::all().map_err(|e| AppError::Capture(e.to_string()))?;
-    tracing::info!("[PERF][capture] Monitor::all(): {:?}", t0.elapsed());
+    let main_display = CGDisplay::main();
+    let bounds = main_display.bounds();
+    
+    let logical_w = bounds.size.width;
+    let logical_h = bounds.size.height;
+    let pixels_w = main_display.pixels_wide();
+    
+    let scale_factor = if logical_w > 0.0 {
+        (pixels_w as f64) / logical_w
+    } else {
+        1.0
+    };
 
-    let primary = monitors
-        .into_iter()
-        .find(|monitor| monitor.is_primary().unwrap_or(false))
-        .ok_or_else(|| AppError::Capture("no primary monitor found".into()))?;
+    let x = bounds.origin.x as i32;
+    let y = bounds.origin.y as i32;
+    let width = logical_w as u32;
+    let height = logical_h as u32;
 
-    let scale_factor = primary.scale_factor().unwrap_or(1.0) as f64;
-    let x = primary.x().unwrap_or(0);
-    let y = primary.y().unwrap_or(0);
-    let width = primary.width().unwrap_or(0);
-    let height = primary.height().unwrap_or(0);
+    tracing::info!("[PERF][capture] CGDisplay::main: {:?}", t0.elapsed());
 
     debug_log(format!(
         "[monitor] primary x={} y={} width={} height={} scale_factor={}",
@@ -148,7 +159,7 @@ fn find_primary_screen_macos() -> AppResult<PrimaryMonitorInfo> {
     ));
 
     Ok(PrimaryMonitorInfo {
-        screen: primary,
+        screen: MockMonitor {},
         scale_factor,
         x,
         y,

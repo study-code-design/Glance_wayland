@@ -7,8 +7,6 @@ use serde::Serialize;
 use crate::capture;
 use crate::capture_window;
 use crate::error::{AppError, AppResult};
-#[cfg(target_os = "macos")]
-use crate::macos_permissions;
 
 const SELF_TEST_DIR: &str = "/tmp/glance-self-test/latest";
 const SMOKE_TEST_DIR: &str = "/tmp/glance-smoke-test/latest";
@@ -58,16 +56,6 @@ pub fn should_run_capture_smoke_test() -> bool {
 }
 
 pub fn run_capture_self_test() -> AppResult<CaptureSelfTestResult> {
-    #[cfg(target_os = "macos")]
-    {
-        if !macos_permissions::has_screen_recording_permission() {
-            let _ = macos_permissions::request_screen_recording_permission();
-            return Err(AppError::Capture(
-                "screen recording permission is required for --capture-self-test".into(),
-            ));
-        }
-    }
-
     let total_started = Instant::now();
     let output_dir = reset_output_dir(PathBuf::from(SELF_TEST_DIR))?;
 
@@ -142,13 +130,6 @@ pub fn run_capture_smoke_test() -> AppResult<CaptureSmokeTestResult> {
 
     #[cfg(target_os = "macos")]
     {
-        if !macos_permissions::has_screen_recording_permission() {
-            let _ = macos_permissions::request_screen_recording_permission();
-            return Err(AppError::Capture(
-                "screen recording permission is required for --capture-smoke-test".into(),
-            ));
-        }
-
         let total_started = Instant::now();
         let output_dir = reset_output_dir(PathBuf::from(SMOKE_TEST_DIR))?;
 

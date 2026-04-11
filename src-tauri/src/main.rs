@@ -8,7 +8,6 @@ mod commands;
 mod config;
 mod error;
 mod google_translate;
-mod macos_permissions;
 mod models;
 mod self_test;
 

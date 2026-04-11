@@ -211,6 +211,7 @@ function renderMain() {
     saveSettings().catch(() => {});
   });
   document.querySelector("#tts-btn").addEventListener("click", speakInput);
+
   document.querySelector("#capture-btn").addEventListener("click", e => { e.stopPropagation(); startCapture(); });
   document.querySelector("#action-block").addEventListener("click", () => { startCapture(); });
   document.querySelector("#shortcut-row").addEventListener("click", e => { e.stopPropagation(); startHotkeyRecording(); });

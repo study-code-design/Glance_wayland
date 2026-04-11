@@ -134,11 +134,25 @@ pub async fn translate_text(
 #[tauri::command]
 pub async fn hide_window(app: AppHandle) -> AppResult<()> {
     if let Some(w) = app.get_webview_window("main") {
-        w.hide()?;
+        instant_hide(&w);
     }
     #[cfg(target_os = "macos")]
     app.set_dock_visibility(false)?;
     Ok(())
+}
+
+fn instant_hide(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(raw) = window.ns_window() {
+            unsafe {
+                let ns_window: &objc2_app_kit::NSWindow = &*raw.cast();
+                // 2 is NSWindowAnimationBehaviorNone
+                ns_window.setAnimationBehavior(objc2_app_kit::NSWindowAnimationBehavior(2));
+            }
+        }
+    }
+    let _ = window.hide();
 }
 
 #[tauri::command]
@@ -189,9 +203,8 @@ async fn begin_capture_impl(app: &AppHandle, state: &SharedState) -> AppResult<(
             "[begin] main window visible before capture={was_visible}"
         ));
         if was_visible {
-            let _ = main_window.hide();
-            tokio::time::sleep(Duration::from_millis(40)).await;
-            capture::debug_log("[begin] hid main window and waited 40ms");
+            instant_hide(&main_window);
+            capture::debug_log("[begin] hid main window instantly");
             capture_timeline(&t0, "main window hidden");
         }
         was_visible
@@ -898,3 +911,4 @@ fn create_overlay_window(
     window.set_focus()?;
     Ok(())
 }
+
