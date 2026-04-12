@@ -18,6 +18,22 @@ const TTS_LANG_MAP = {
   "fr": "fr-FR", "de": "de-DE", "ru": "ru-RU", "es": "es-ES"
 };
 
+const TRANSLATE_ENGINES = [
+  { value: "google", label: "Google" },
+  { value: "bing", label: "必应" },
+  { value: "youdao", label: "有道" }
+];
+
+let debounceTimer = null;
+
+function debouncedTranslate() {
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    const text = state.inputText.trim();
+    if (text && !state.textLoading) translateText();
+  }, 500);
+}
+
 const app = document.querySelector("#app");
 const mode = window.__APP_MODE__ || "main";
 document.body.dataset.mode = mode.startsWith("overlay") ? "overlay" : "main";
@@ -60,7 +76,9 @@ function defaultSettings() {
     overlayFontScale: 1,
     closeOnOutsideClick: true,
     autostart: false,
-    hotkey: "CommandOrControl+Shift+X"
+    hotkey: "CommandOrControl+Shift+X",
+    textTranslateEngine: "youdao",
+    popupShortcut: null
   };
 }
 
@@ -161,31 +179,51 @@ function renderMain() {
           </div>
         </div>
         <div class="header-right">
-          <span class="autostart-label">开机自启</span>
-          <button class="toggle ${state.settings.autostart ? "on" : ""}" id="autostart" title="开机自启" aria-pressed="${state.settings.autostart}"></button>
+          <button class="capture-btn" id="capture-btn" title="截图翻译">⛶ 截图翻译</button>
+          <button class="settings-btn" id="settings-btn" title="设置">⚙</button>
         </div>
       </div>
 
       <div class="block text-block">
-        <div class="input-wrap">
-          <textarea class="input-area" id="text-input" placeholder="输入要翻译的文本..." rows="3"></textarea>
-          <button class="tts-btn ${state.ttsPlaying ? "speaking" : ""}" id="tts-btn" title="朗读">🔊</button>
-        </div>
-        <div class="divider"></div>
-        <div class="meta-info">
-          <span class="detect-tag" id="detected-lang" style="display:none"></span>
-        </div>
-        <textarea class="output-area" id="output-area" readonly></textarea>
-      </div>
-
-      <div class="block action-block" id="action-block">
-        <div class="action-info">
-          <div class="action-title">截图翻译</div>
-          <div class="shortcut-row" id="shortcut-row">
-            快捷键: ${shortcutKeysHtml(state.settings.hotkey)} <span class="shortcut-hint">点击可设置快捷键</span>
+        <div class="text-col input-col">
+          <div class="input-wrap">
+            <textarea class="input-area" id="text-input" placeholder="输入要翻译的文本..." rows="3"></textarea>
+          </div>
+          <div class="meta-info">
+            <span class="detect-tag" id="detected-lang" style="display:none"></span>
+            <button class="tts-btn ${state.ttsPlaying ? "speaking" : ""}" id="tts-btn" title="朗读">🔊</button>
           </div>
         </div>
-        <button class="action-icon" id="capture-btn" title="截图翻译">⛶</button>
+        <div class="text-col output-col">
+          <textarea class="output-area" id="output-area" readonly></textarea>
+        </div>
+      </div>
+
+      <div class="settings-panel" id="settings-panel" style="display:none">
+        <div class="settings-section">
+          <div class="settings-row">
+            <span class="settings-label">翻译引擎</span>
+            <div class="engine-switcher">
+              ${TRANSLATE_ENGINES.map(e => `<button class="engine-btn ${state.settings.textTranslateEngine === e.value ? "active" : ""}" data-engine="${e.value}">${e.label}</button>`).join("")}
+            </div>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">开机自启</span>
+            <button class="toggle ${state.settings.autostart ? "on" : ""}" id="autostart" aria-pressed="${state.settings.autostart}"></button>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">截图翻译</span>
+            <div class="shortcut-row settings-shortcut" id="shortcut-row">
+              快捷键: ${state.settings.hotkey ? shortcutKeysHtml(state.settings.hotkey) : "未设置"} <span class="shortcut-hint">点击可设置</span>
+            </div>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">弹出窗口</span>
+            <div class="shortcut-row settings-shortcut" id="popup-shortcut-row">
+              ${state.settings.popupShortcut ? shortcutKeysHtml(state.settings.popupShortcut) : "未设置"} <span class="shortcut-hint">点击可设置</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>`;
 
@@ -193,28 +231,53 @@ function renderMain() {
   const inp = document.querySelector("#text-input");
   inp.value = state.inputText;
 
-  // Update output & detected lang
-  updateOutputArea();
-  updateDetectedLang();
-
-  // Events
-  inp.addEventListener("input", e => { state.inputText = e.target.value; });
+// Events
+  inp.addEventListener("input", e => { state.inputText = e.target.value; debouncedTranslate(); });
   inp.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); translateText(); }
   });
+  inp.addEventListener("paste", () => {
+    setTimeout(() => {
+      state.inputText = inp.value;
+      translateText();
+    }, 0);
+  });
   document.querySelector("#from-lang").addEventListener("change", e => { state.settings.fromLang = e.target.value; saveSettings().catch(()=>{}); });
   document.querySelector("#to-lang").addEventListener("change", e => { state.settings.toLang = e.target.value; saveSettings().catch(()=>{}); });
+
+  document.querySelector("#settings-btn").addEventListener("click", e => {
+    e.stopPropagation();
+    const panel = document.querySelector("#settings-panel");
+    const btn = e.currentTarget;
+    const open = panel.style.display === "none";
+    panel.style.display = open ? "" : "none";
+    btn.classList.toggle("open", open);
+    if (open) {
+      invoke?.("resize_main_window", { height: 520 }).catch(() => {});
+    } else {
+      invoke?.("resize_main_window", { height: 400 }).catch(() => {});
+    }
+  });
+
   document.querySelector("#autostart").addEventListener("click", e => {
     state.settings.autostart = !state.settings.autostart;
     e.currentTarget.classList.toggle("on", state.settings.autostart);
     e.currentTarget.setAttribute("aria-pressed", state.settings.autostart);
     saveSettings().catch(() => {});
   });
+  document.querySelectorAll(".engine-switcher .engine-btn").forEach(btn => {
+    btn.addEventListener("click", e => {
+      const engine = e.currentTarget.dataset.engine;
+      state.settings.textTranslateEngine = engine;
+      document.querySelectorAll(".engine-switcher .engine-btn").forEach(b => b.classList.toggle("active", b.dataset.engine === engine));
+      saveSettings().catch(() => {});
+    });
+  });
   document.querySelector("#tts-btn").addEventListener("click", speakInput);
 
   document.querySelector("#capture-btn").addEventListener("click", e => { e.stopPropagation(); startCapture(); });
-  document.querySelector("#action-block").addEventListener("click", () => { startCapture(); });
   document.querySelector("#shortcut-row").addEventListener("click", e => { e.stopPropagation(); startHotkeyRecording(); });
+  document.querySelector("#popup-shortcut-row").addEventListener("click", e => { e.stopPropagation(); startPopupShortcutRecording(); });
 
   inp.focus();
 }
@@ -227,14 +290,10 @@ function updateOutputArea() {
   const dots = `<span class="dot-loading"><span></span><span></span><span></span></span>`;
 
   if (state.textLoading) {
-    el.value = "";
-    el.parentElement.querySelector(".dot-loading")?.remove();
-    const loader = document.createElement("span");
-    loader.className = "dot-loading";
-    loader.innerHTML = "<span></span><span></span><span></span>";
-    el.before(loader);
+    el.value = "翻译中…";
+    el.parentElement.parentElement.querySelector(".dot-loading")?.remove();
   } else {
-    el.parentElement.querySelector(".dot-loading")?.remove();
+    el.parentElement.parentElement.querySelector(".dot-loading")?.remove();
     if (state.translatedText) {
       el.value = state.translatedText;
     } else if (state.loading && state.status) {
@@ -382,6 +441,47 @@ function startHotkeyRecording() {
   document.addEventListener("keydown", onKey, true);
 }
 
+function startPopupShortcutRecording() {
+  if (state.hotkeyRecording) return;
+  state.hotkeyRecording = true;
+  const row = document.querySelector("#popup-shortcut-row");
+  if (!row) return;
+  row.classList.add("recording");
+  row.innerHTML = `按下快捷键…`;
+
+  function onKey(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const mods = [];
+    if (e.ctrlKey) mods.push("Ctrl");
+    if (e.altKey) mods.push("Alt");
+    if (e.shiftKey) mods.push("Shift");
+    if (e.metaKey) mods.push("Super");
+    if (["Control","Alt","Shift","Meta"].includes(e.key)) return;
+    let key = KEY_MAP[e.key] || (e.key.length === 1 ? e.key.toUpperCase() : null);
+    if (!key || mods.length === 0) {
+      if (e.key === "Escape") { finishRecording(null); }
+      return;
+    }
+    finishRecording([...mods, key].join("+"));
+  }
+
+  function finishRecording(combo) {
+    document.removeEventListener("keydown", onKey, true);
+    state.hotkeyRecording = false;
+    state.settings.popupShortcut = combo || null;
+    saveSettings().catch(() => {});
+    const r = document.querySelector("#popup-shortcut-row");
+    if (r) {
+      r.classList.remove("recording");
+      const display = state.settings.popupShortcut ? shortcutKeysHtml(state.settings.popupShortcut) : "未设置";
+      r.innerHTML = `${display} <span class="shortcut-hint">点击可设置</span>`;
+    }
+  }
+
+  document.addEventListener("keydown", onKey, true);
+}
+
 /* ── Overlay (unchanged) ── */
 
 async function renderOverlay() {
@@ -432,6 +532,7 @@ async function boot() {
     state.status = `设置加载失败，已使用默认配置: ${err instanceof Error ? err.message : String(err)}`;
     state.statusType = "error";
   }
+  invoke?.("resize_main_window", { height: 400 }).catch(() => {});
   renderMain();
 }
 

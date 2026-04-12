@@ -18,11 +18,11 @@
       {
         "label": "main",
         "title": "Glance",
-        "width": 420,
+        "width": 520,
         "height": 400,
         "resizable": false,
         "center": true,
-        "minWidth": 420,
+        "minWidth": 520,
         "minHeight": 400,
         "decorations": true,
         "shadow": true

@@ -61,6 +61,8 @@ impl GoogleTranslateClient {
             .unwrap_or(from)
             .to_string();
 
+        let detected = normalize_google_lang(&detected);
+
         if translated.is_empty() {
             return Err(AppError::Api(
                 "Google Translate returned empty result".into(),
@@ -80,5 +82,13 @@ fn map_lang_code(code: &str) -> String {
         "zh-CHS" => "zh-CN".to_string(),
         "zh-CHT" => "zh-TW".to_string(),
         _ => code.to_string(),
+    }
+}
+
+fn normalize_google_lang(code: &str) -> String {
+    match code {
+        "zh-CN" => "zh-CHS".to_string(),
+        "zh-TW" => "zh-CHT".to_string(),
+        other => other.to_lowercase(),
     }
 }

@@ -2,6 +2,7 @@
 
 mod api;
 mod app_state;
+mod bing_translate;
 mod capture;
 mod capture_window;
 mod commands;
@@ -10,18 +11,24 @@ mod error;
 mod google_translate;
 mod models;
 mod self_test;
+mod translate_engine;
+mod youdao_text_translate;
 
 use std::path::PathBuf;
 
 use api::YoudaoClient;
 use app_state::SharedState;
+use bing_translate::BingTranslateClient;
 use commands::{
     begin_capture, cancel_capture, capture_debug_log, clear_history, close_overlay, hide_window,
-    list_history, load_capture_payload, load_overlay_payload, load_settings, save_settings,
-    show_overlay, submit_capture_selection, translate_text,
+    list_history, load_capture_payload, load_overlay_payload, load_settings, resize_main_window,
+    save_settings, show_overlay, submit_capture_selection, translate_text,
 };
 use config::ConfigStore;
+use google_translate::GoogleTranslateClient;
 use models::TranslatorSettings;
+use translate_engine::TextTranslator;
+use youdao_text_translate::YoudaoTextTranslateClient;
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
@@ -93,6 +100,9 @@ fn main() {
 
                 commands::apply_autostart(&app_handle, settings.autostart);
                 commands::apply_hotkey(&app_handle, &settings.hotkey);
+                if let Some(ref popup) = settings.popup_shortcut {
+                    commands::apply_popup_shortcut(&app_handle, popup);
+                }
 
                 let http = std::sync::Arc::new(
                     reqwest::Client::builder()
@@ -100,12 +110,15 @@ fn main() {
                         .build()?,
                 );
                 let api_client = YoudaoClient::new(http.clone());
-                let google_client = google_translate::GoogleTranslateClient::new(http);
+                let google_client = GoogleTranslateClient::new(http.clone());
+                let bing_client = BingTranslateClient::new(http.clone());
+                let youdao_text_client = YoudaoTextTranslateClient::new(http);
+                let text_translator = TextTranslator::new(google_client, bing_client, youdao_text_client);
                 app_handle.manage(SharedState::new(
                     config_store,
                     settings,
                     api_client,
-                    google_client,
+                    text_translator,
                 ));
                 Ok::<(), error::AppError>(())
             })?;
@@ -164,6 +177,7 @@ fn main() {
             load_overlay_payload,
             close_overlay,
             translate_text,
+            resize_main_window,
             hide_window,
             capture_debug_log
         ])

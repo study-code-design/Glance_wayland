@@ -21,6 +21,7 @@ use crate::models::{
 
 const OVERLAY_WINDOW_LABEL: &str = "overlay";
 const CAPTURE_WINDOW_LABEL: &str = "capture";
+const WIN_WIDTH: f64 = 520.0;
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,14 @@ pub async fn save_settings(
     if settings.hotkey != old.hotkey {
         unregister_hotkey(&app, &old.hotkey);
         apply_hotkey(&app, &settings.hotkey);
+    }
+    if settings.popup_shortcut != old.popup_shortcut {
+        if let Some(ref old_shortcut) = old.popup_shortcut {
+            unregister_hotkey(&app, old_shortcut);
+        }
+        if let Some(ref new_shortcut) = settings.popup_shortcut {
+            apply_popup_shortcut(&app, new_shortcut);
+        }
     }
 
     Ok(settings)
@@ -91,6 +100,32 @@ fn unregister_hotkey(app: &AppHandle, hotkey: &str) {
     }
 }
 
+pub fn apply_popup_shortcut(app: &AppHandle, shortcut: &str) {
+    if shortcut.is_empty() {
+        return;
+    }
+    let app_clone = app.clone();
+    if let Err(e) = app
+        .global_shortcut()
+        .on_shortcut(shortcut, move |_app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                let app2 = app_clone.clone();
+                tauri::async_runtime::spawn(async move {
+                    #[cfg(target_os = "macos")]
+                    let _ = app2.set_dock_visibility(true);
+                    if let Some(w) = app2.get_webview_window("main") {
+                        let _ = w.unminimize();
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                });
+            }
+        })
+    {
+        tracing::warn!("popup shortcut register failed for '{shortcut}': {e}");
+    }
+}
+
 // ── History ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -122,13 +157,23 @@ pub async fn translate_text(
     from_lang: String,
     to_lang: String,
 ) -> AppResult<TextTranslationResult> {
+    let engine = state.settings.read().await.text_translate_engine;
     state
-        .google_client
-        .translate(&text, &from_lang, &to_lang)
+        .text_translator
+        .translate(&text, &from_lang, &to_lang, engine)
         .await
 }
 
 // ── Window ──────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn resize_main_window(app: AppHandle, height: f64) -> AppResult<()> {
+    if let Some(w) = app.get_webview_window("main") {
+        use tauri::LogicalSize;
+        let _ = w.set_size(LogicalSize::new(WIN_WIDTH, height));
+    }
+    Ok(())
+}
 
 #[tauri::command]
 pub async fn hide_window(app: AppHandle) -> AppResult<()> {

@@ -2,6 +2,20 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextTranslateEngine {
+    Google,
+    Bing,
+    Youdao,
+}
+
+impl Default for TextTranslateEngine {
+    fn default() -> Self {
+        Self::Youdao
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranslatorSettings {
@@ -27,6 +41,10 @@ pub struct TranslatorSettings {
     pub autostart: bool,
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
+    #[serde(default)]
+    pub text_translate_engine: TextTranslateEngine,
+    #[serde(default)]
+    pub popup_shortcut: Option<String>,
 }
 
 impl Default for TranslatorSettings {
@@ -65,6 +83,8 @@ impl Default for TranslatorSettings {
             close_on_outside_click: true,
             autostart: false,
             hotkey: default_hotkey(),
+            text_translate_engine: TextTranslateEngine::default(),
+            popup_shortcut: None,
         }
     }
 }
