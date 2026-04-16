@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use reqwest::Client;
+use reqwest::header::{HeaderMap, ORIGIN, REFERER};
 use tokio::sync::RwLock;
 
 use crate::error::{AppError, AppResult};
@@ -38,21 +39,25 @@ impl BingTranslateClient {
         let from_bing = map_lang_code_bing(from);
         let to_bing = map_lang_code_bing(to);
 
+        let mut headers = HeaderMap::new();
+        headers.insert(REFERER, "https://cn.bing.com/translator".parse().unwrap());
+        headers.insert(ORIGIN, "https://cn.bing.com".parse().unwrap());
+
         let resp = self
             .http
-            .post("https://www.bing.com/ttranslatev3")
+            .post("https://cn.bing.com/ttranslatev3")
             .query(&[
                 ("isVertical", "1"),
-                ("", ""),
                 ("IG", &token.ig),
                 ("IID", &token.iid),
             ])
+            .headers(headers)
             .form(&[
                 ("fromLang", from_bing.as_str()),
                 ("to", to_bing.as_str()),
                 ("text", text),
-                ("key", &token.value),
-                ("tokenSig", &token.key),
+                ("token", &token.value),
+                ("key", &token.key),
             ])
             .send()
             .await
@@ -64,16 +69,22 @@ impl BingTranslateClient {
             return Err(AppError::Api("Bing translate rate limited, token reset".into()));
         }
 
-        let body: serde_json::Value = resp
-            .json()
-            .await
+        let resp_text = resp.text().await.map_err(|e| {
+            AppError::Api(format!("Bing translate read body failed: {e}"))
+        })?;
+
+        let body: serde_json::Value = serde_json::from_str(&resp_text)
             .map_err(|e| AppError::Api(format!("Bing translate parse failed: {e}")))?;
 
-        if let Some(err) = body.get("statusCode").and_then(|v| v.as_u64()) {
-            if err >= 400 {
-                *self.token.write().await = None;
-                return Err(AppError::Api(format!("Bing translate error: statusCode={err}")));
-            }
+        // Captcha or auth error — reset token so next call refreshes it
+        if body.get("ShowCaptcha").is_some()
+            || body
+                .get("statusCode")
+                .and_then(|v| v.as_u64())
+                .map_or(false, |c| c >= 400)
+        {
+            *self.token.write().await = None;
+            return Err(AppError::Api("Bing translate auth failed, token reset".into()));
         }
 
         let translated = body
@@ -97,6 +108,7 @@ impl BingTranslateClient {
         Ok(TextTranslationResult {
             translated_text: translated,
             from_lang_detected: normalize_bing_lang(&detected),
+            alternatives: Vec::new(),
         })
     }
 
@@ -110,7 +122,7 @@ impl BingTranslateClient {
 
         let resp = self
             .http
-            .get("https://www.bing.com/translator")
+            .get("https://cn.bing.com/translator")
             .send()
             .await
             .map_err(|e| AppError::Api(format!("Bing token fetch failed: {e}")))?;
@@ -120,28 +132,9 @@ impl BingTranslateClient {
             .await
             .map_err(|e| AppError::Api(format!("Bing token read failed: {e}")))?;
 
-        let value = extract_var(&html, "params_RichTranslateHelper = [")
-            .or_else(|| extract_var(&html, "params_RichTranslateHelper = ["))
-            .and_then(|s| {
-                let start = s.find('"')?;
-                let end = s[start + 1..].find('"')?;
-                Some(s[start + 1..start + 1 + end].to_string())
-            })
-            .ok_or_else(|| AppError::Api("Bing token value not found in page".into()))?;
-
-        let key = extract_var(&html, "params_RichTranslateHelper = [")
-            .and_then(|s| {
-                let after_first = s.find("\",\"")?;
-                let rest = &s[after_first + 3..];
-                let end = rest.find('"')?;
-                Some(rest[..end].to_string())
-            })
-            .ok_or_else(|| AppError::Api("Bing token key not found in page".into()))?;
-
-        let ig = extract_var(&html, "IG:\"")
-            .or_else(|| extract_var(&html, "IG: \""))
-            .ok_or_else(|| AppError::Api("Bing IG not found in page".into()))?;
-
+        // Extract abuse prevention token: params_AbusePreventionHelper = [key, token, expiry]
+        let (key, value) = extract_abuse_prevention_token(&html)?;
+        let ig = extract_ig(&html)?;
         let iid = extract_iid(&html).unwrap_or_else(|| "translator.5023".to_string());
 
         let token = BingToken {
@@ -156,11 +149,47 @@ impl BingTranslateClient {
     }
 }
 
-fn extract_var(html: &str, prefix: &str) -> Option<String> {
-    let start = html.find(prefix)?;
+/// Extract `params_AbusePreventionHelper = [key_number, "token_string", expiry_ms]`
+fn extract_abuse_prevention_token(html: &str) -> AppResult<(String, String)> {
+    let prefix = "params_AbusePreventionHelper = [";
+    let start = html
+        .find(prefix)
+        .ok_or_else(|| AppError::Api("Bing: params_AbusePreventionHelper not found".into()))?;
     let rest = &html[start + prefix.len()..];
-    let end = rest.find(';').unwrap_or(rest.len());
-    Some(rest[..end].to_string())
+    let end = rest
+        .find(']')
+        .ok_or_else(|| AppError::Api("Bing: params_AbusePreventionHelper end not found".into()))?;
+    let arr_str = &rest[..end];
+
+    // Parse: 1776282492550,"nrMI-zJYQOEbI2HaWB9KirT3EiWqpPx7",3600000
+    let parts: Vec<&str> = arr_str.splitn(3, ',').collect();
+    if parts.len() < 2 {
+        return Err(AppError::Api(
+            "Bing: abuse prevention token array too short".into(),
+        ));
+    }
+
+    let key = parts[0].trim().to_string();
+    // Token is quoted — strip quotes
+    let value = parts[1].trim().trim_matches('"').to_string();
+
+    if value.is_empty() || key.is_empty() {
+        return Err(AppError::Api(
+            "Bing: abuse prevention token or key is empty".into(),
+        ));
+    }
+
+    Ok((key, value))
+}
+
+fn extract_ig(html: &str) -> AppResult<String> {
+    let prefix = "IG:\"";
+    let start = html
+        .find(prefix)
+        .ok_or_else(|| AppError::Api("Bing IG not found".into()))?;
+    let rest = &html[start + prefix.len()..];
+    let end = rest.find('"').unwrap_or(rest.len());
+    Ok(rest[..end].to_string())
 }
 
 fn extract_iid(html: &str) -> Option<String> {

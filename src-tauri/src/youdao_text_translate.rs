@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use reqwest::Client;
-use serde::Deserialize;
 
 use crate::error::{AppError, AppResult};
 use crate::models::TextTranslationResult;
@@ -21,127 +20,143 @@ impl YoudaoTextTranslateClient {
         from: &str,
         to: &str,
     ) -> AppResult<TextTranslationResult> {
-        let typ = youdao_type_code(from, to);
+        let from_code = normalize_lang_for_dict(from);
+        let to_code = normalize_lang_for_dict(to);
+
+        let le = if to_code == "zh" {
+            &from_code
+        } else {
+            &to_code
+        };
 
         let resp = self
             .http
-            .get("https://fanyi.youdao.com/translate")
+            .get("https://dict.youdao.com/jsonapi_s")
             .query(&[
                 ("doctype", "json"),
-                ("type", &typ),
-                ("i", text),
+                ("jsonversion", "4"),
+                ("q", text),
+                ("le", le),
             ])
             .send()
             .await
-            .map_err(|e| AppError::Api(format!("Youdao text translate request failed: {e}")))?;
+            .map_err(|e| AppError::Api(format!("Youdao dict request failed: {e}")))?;
 
-        let body: YoudaoResponse = resp
-            .json()
+        let status = resp.status();
+        let raw = resp
+            .text()
             .await
-            .map_err(|e| AppError::Api(format!("Youdao text translate parse failed: {e}")))?;
+            .map_err(|e| AppError::Api(format!("Youdao dict read body failed: {e}")))?;
 
-        if body.errorCode != 0 {
+        if !status.is_success() {
             return Err(AppError::Api(format!(
-                "Youdao text translate error: errorCode={}",
-                body.errorCode
+                "Youdao dict HTTP {}",
+                status.as_u16()
             )));
         }
 
+        let body: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|e| AppError::Api(format!("Youdao dict parse failed: {e}")))?;
+
         let mut translated = String::new();
-        for row in &body.translateResult {
-            for seg in row {
-                translated.push_str(&seg.tgt);
+        let mut alternatives: Vec<String> = Vec::new();
+        let mut detected = from.to_string();
+
+        // EC (English-Chinese dictionary) translations — primary + alternatives
+        if let Some(ec) = body.get("ec") {
+            if let Some(word) = ec.get("word").and_then(|w| w.as_str()) {
+                if detected == "auto" && !word.is_empty() {
+                    detected = "en".to_string();
+                }
+            }
+            if let Some(trs) = ec.get("trs").and_then(|t| t.as_array()) {
+                for (i, tr) in trs.iter().enumerate() {
+                    if let Some(text_val) = tr
+                        .get("tr")
+                        .and_then(|arr| arr.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|item| item.get("#text"))
+                        .and_then(|v| v.as_str())
+                    {
+                        if i == 0 {
+                            translated = text_val.to_string();
+                        } else {
+                            alternatives.push(text_val.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // web_trans — also collect as alternatives
+        if let Some(wt) = body.get("web_trans") {
+            if let Some(items) = wt.get("web-translation").and_then(|v| v.as_array()) {
+                if let Some(first) = items.first() {
+                    if let Some(key) = first.get("key").and_then(|v| v.as_str()) {
+                        if detected == "auto" {
+                            detected = if key.chars().any(|c| '\u{4e00}' <= c && c <= '\u{9fff}') {
+                                "zh-CHS".to_string()
+                            } else {
+                                "en".to_string()
+                            };
+                        }
+                    }
+                    if let Some(trans) = first.get("trans").and_then(|v| v.as_array()) {
+                        for (i, t) in trans.iter().enumerate() {
+                            if let Some(val) = t.get("value").and_then(|v| v.as_str()) {
+                                if translated.is_empty() && i == 0 {
+                                    translated = val.to_string();
+                                } else if !val.is_empty() {
+                                    alternatives.push(val.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
         if translated.is_empty() {
             return Err(AppError::Api(
-                "Youdao text translate returned empty result".into(),
+                "Youdao dict returned no translation".into(),
             ));
         }
 
-        let detected = if from == "auto" {
-            body.r#type
-                .split("2")
-                .next()
-                .unwrap_or("auto")
-                .to_string()
-        } else {
-            from.to_string()
-        };
-
         Ok(TextTranslationResult {
             translated_text: translated,
-            from_lang_detected: normalize_youdao_lang(&detected),
+            from_lang_detected: normalize_dict_lang(&detected),
+            alternatives,
         })
     }
 }
 
-fn youdao_type_code(from: &str, to: &str) -> String {
-    let from = normalize_to_youdao(from);
-    let to = normalize_to_youdao(to);
-    if from == "AUTO" || to == "AUTO" {
-        "AUTO".to_string()
-    } else {
-        format!("{from}2{to}")
-    }
-}
-
-fn normalize_to_youdao(code: &str) -> &'static str {
+fn normalize_lang_for_dict(code: &str) -> String {
     match code {
-        "zh-CHS" | "zh-CN" | "zh" => "ZH_CN",
-        "zh-CHT" | "zh-TW" => "ZH_CHT",
-        "en" => "EN",
-        "ja" => "JA",
-        "ko" => "KO",
-        "fr" => "FR",
-        "de" => "DE",
-        "ru" => "RU",
-        "es" => "ES",
-        "pt" => "PT",
-        "it" => "IT",
-        "vi" => "VI",
-        "id" => "ID",
-        "ar" => "AR",
-        "nl" => "NL",
-        "th" => "TH",
-        "auto" => "AUTO",
-        _ => "AUTO",
+        "zh-CHS" | "zh-CN" | "zh" => "zh".to_string(),
+        "zh-CHT" | "zh-TW" => "zh".to_string(),
+        "en" => "en".to_string(),
+        "ja" => "ja".to_string(),
+        "ko" => "ko".to_string(),
+        "fr" => "fr".to_string(),
+        "de" => "de".to_string(),
+        "ru" => "ru".to_string(),
+        "es" => "es".to_string(),
+        "auto" => "en".to_string(),
+        other => other.to_string(),
     }
 }
 
-fn normalize_youdao_lang(code: &str) -> String {
+fn normalize_dict_lang(code: &str) -> String {
     match code {
-        "ZH_CN" => "zh-CHS".to_string(),
-        "ZH_CHT" => "zh-CHT".to_string(),
-        "EN" => "en".to_string(),
-        "JA" => "ja".to_string(),
-        "KO" => "ko".to_string(),
-        "FR" => "fr".to_string(),
-        "DE" => "de".to_string(),
-        "RU" => "ru".to_string(),
-        "ES" => "es".to_string(),
-        "PT" => "pt".to_string(),
-        "IT" => "it".to_string(),
-        other => other.to_lowercase(),
+        "zh-CHS" | "zh-CN" | "zh" => "zh-CHS".to_string(),
+        "zh-CHT" | "zh-TW" => "zh-CHT".to_string(),
+        "en" => "en".to_string(),
+        "ja" => "ja".to_string(),
+        "ko" => "ko".to_string(),
+        "fr" => "fr".to_string(),
+        "de" => "de".to_string(),
+        "ru" => "ru".to_string(),
+        "es" => "es".to_string(),
+        other => other.to_string(),
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(non_snake_case)]
-struct YoudaoResponse {
-    #[serde(rename = "type")]
-    r#type: String,
-    #[serde(default)]
-    errorCode: i64,
-    #[serde(default)]
-    translateResult: Vec<Vec<YoudaoSegment>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct YoudaoSegment {
-    #[serde(default)]
-    tgt: String,
-    #[serde(default)]
-    src: String,
 }

@@ -8,11 +8,9 @@ mod capture_window;
 mod commands;
 mod config;
 mod error;
-mod google_translate;
 mod models;
 mod self_test;
 mod translate_engine;
-mod youdao_text_translate;
 
 use std::path::PathBuf;
 
@@ -25,10 +23,8 @@ use commands::{
     save_settings, show_overlay, submit_capture_selection, translate_text,
 };
 use config::ConfigStore;
-use google_translate::GoogleTranslateClient;
 use models::TranslatorSettings;
 use translate_engine::TextTranslator;
-use youdao_text_translate::YoudaoTextTranslateClient;
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
@@ -104,16 +100,35 @@ fn main() {
                     commands::apply_popup_shortcut(&app_handle, popup);
                 }
 
-                let http = std::sync::Arc::new(
+                // ── HTTP clients ────────────────────────────────────────────────
+                // General client for Youdao
+                let mut general_headers = reqwest::header::HeaderMap::new();
+                general_headers.insert(reqwest::header::ACCEPT, "*/*".parse().unwrap());
+                general_headers.insert(reqwest::header::ACCEPT_LANGUAGE, "zh-CN,zh;q=0.9,en;q=0.8".parse().unwrap());
+
+                let general_http = std::sync::Arc::new(
                     reqwest::Client::builder()
-                        .user_agent("glance/0.1")
+                        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .default_headers(general_headers)
                         .build()?,
                 );
-                let api_client = YoudaoClient::new(http.clone());
-                let google_client = GoogleTranslateClient::new(http.clone());
-                let bing_client = BingTranslateClient::new(http.clone());
-                let youdao_text_client = YoudaoTextTranslateClient::new(http);
-                let text_translator = TextTranslator::new(google_client, bing_client, youdao_text_client);
+
+                // Bing client with Bing-specific headers
+                let mut bing_headers = reqwest::header::HeaderMap::new();
+                bing_headers.insert(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8".parse().unwrap());
+                bing_headers.insert(reqwest::header::ACCEPT_LANGUAGE, "zh-CN,zh;q=0.9,en;q=0.8".parse().unwrap());
+                bing_headers.insert(reqwest::header::ORIGIN, "https://cn.bing.com".parse().unwrap());
+
+                let bing_http = std::sync::Arc::new(
+                    reqwest::Client::builder()
+                        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .default_headers(bing_headers)
+                        .build()?,
+                );
+
+                let api_client = YoudaoClient::new(general_http);
+                let bing_client = BingTranslateClient::new(bing_http);
+                let text_translator = TextTranslator::new(bing_client);
                 app_handle.manage(SharedState::new(
                     config_store,
                     settings,

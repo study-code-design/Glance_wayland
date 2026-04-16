@@ -74,6 +74,7 @@ pub fn apply_hotkey(app: &AppHandle, hotkey: &str) {
     if hotkey.is_empty() {
         return;
     }
+    tracing::info!("registering global shortcut: '{hotkey}'");
     let app_clone = app.clone();
     if let Err(e) = app
         .global_shortcut()
@@ -104,6 +105,7 @@ pub fn apply_popup_shortcut(app: &AppHandle, shortcut: &str) {
     if shortcut.is_empty() {
         return;
     }
+    tracing::info!("registering popup shortcut: '{shortcut}'");
     let app_clone = app.clone();
     if let Err(e) = app
         .global_shortcut()

@@ -235,12 +235,15 @@ impl CaptureHandler {
             if let (Some(nz_w), Some(nz_h)) = (NonZeroU32::new(img_w), NonZeroU32::new(img_h)) {
                 if session.surface.resize(nz_w, nz_h).is_ok() {
                     session.surface_ready = true;
+                    tracing::debug!("[capture_window] pre-paint buffer, about to set_visible");
                     if let Ok(mut buffer) = session.surface.buffer_mut() {
                         if buffer.len() == (img_w * img_h) as usize {
                             buffer.copy_from_slice(&session.darkened_pixels);
                             let _ = buffer.present();
+                            tracing::debug!("[capture_window] present done, now set_visible");
                             session.shown = true;
                             session.window.set_visible(true);
+                            tracing::debug!("[capture_window] set_visible done");
                         }
                     }
                 }

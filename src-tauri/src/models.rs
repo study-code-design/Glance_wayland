@@ -5,14 +5,12 @@ use serde_json::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TextTranslateEngine {
-    Google,
     Bing,
-    Youdao,
 }
 
 impl Default for TextTranslateEngine {
     fn default() -> Self {
-        Self::Youdao
+        Self::Bing
     }
 }
 
@@ -196,6 +194,8 @@ pub struct TranslationHistoryItem {
 pub struct TextTranslationResult {
     pub translated_text: String,
     pub from_lang_detected: String,
+    #[serde(default)]
+    pub alternatives: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

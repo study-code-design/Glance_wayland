@@ -216,6 +216,9 @@ body.capture-preparing *::after {
 }
 .output-col {
   padding-left: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .text-block textarea {
   width: 100%;
@@ -273,11 +276,47 @@ body.capture-preparing *::after {
 }
 .tts-btn:hover { color: var(--text-main); }
 .tts-btn.speaking { color: var(--accent); }
+.output-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Ensure output textarea also fills available space like input textarea */
 .output-area {
   flex: 1;
   min-height: 0;
   color: var(--text-main);
   overflow-y: auto;
+}
+
+.output-col textarea,
+.output-col .output-wrap {
+  flex: 1;
+  min-height: 0;
+}
+.output-primary {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-main);
+  white-space: pre-wrap;
+  margin-bottom: 8px;
+}
+.output-alternatives {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.alt-tag {
+  background: #F4F4F5;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-sub);
+  cursor: default;
+  line-height: 1.4;
 }
 
 /* ── Capture button in header ── */

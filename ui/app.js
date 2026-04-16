@@ -19,9 +19,7 @@ const TTS_LANG_MAP = {
 };
 
 const TRANSLATE_ENGINES = [
-  { value: "google", label: "Google" },
-  { value: "bing", label: "必应" },
-  { value: "youdao", label: "有道" }
+  { value: "bing", label: "必应" }
 ];
 
 let debounceTimer = null;
@@ -49,6 +47,7 @@ const state = {
   listenersBound: false,
   inputText: "",
   translatedText: "",
+  alternatives: [],
   textLoading: false,
   detectedLang: "",
   ttsPlaying: false,
@@ -195,18 +194,15 @@ function renderMain() {
           </div>
         </div>
         <div class="text-col output-col">
-          <textarea class="output-area" id="output-area" readonly></textarea>
+          <div class="output-wrap" id="output-wrap">
+            <div class="output-primary" id="output-primary"></div>
+            <div class="output-alternatives" id="output-alternatives"></div>
+          </div>
         </div>
       </div>
 
       <div class="settings-panel" id="settings-panel" style="display:none">
         <div class="settings-section">
-          <div class="settings-row">
-            <span class="settings-label">翻译引擎</span>
-            <div class="engine-switcher">
-              ${TRANSLATE_ENGINES.map(e => `<button class="engine-btn ${state.settings.textTranslateEngine === e.value ? "active" : ""}" data-engine="${e.value}">${e.label}</button>`).join("")}
-            </div>
-          </div>
           <div class="settings-row">
             <span class="settings-label">开机自启</span>
             <button class="toggle ${state.settings.autostart ? "on" : ""}" id="autostart" aria-pressed="${state.settings.autostart}"></button>
@@ -265,14 +261,6 @@ function renderMain() {
     e.currentTarget.setAttribute("aria-pressed", state.settings.autostart);
     saveSettings().catch(() => {});
   });
-  document.querySelectorAll(".engine-switcher .engine-btn").forEach(btn => {
-    btn.addEventListener("click", e => {
-      const engine = e.currentTarget.dataset.engine;
-      state.settings.textTranslateEngine = engine;
-      document.querySelectorAll(".engine-switcher .engine-btn").forEach(b => b.classList.toggle("active", b.dataset.engine === engine));
-      saveSettings().catch(() => {});
-    });
-  });
   document.querySelector("#tts-btn").addEventListener("click", speakInput);
 
   document.querySelector("#capture-btn").addEventListener("click", e => { e.stopPropagation(); startCapture(); });
@@ -285,24 +273,31 @@ function renderMain() {
 /* ── Partial DOM updates ── */
 
 function updateOutputArea() {
-  const el = document.querySelector("#output-area");
-  if (!el) return;
-  const dots = `<span class="dot-loading"><span></span><span></span><span></span></span>`;
+  const primaryEl = document.querySelector("#output-primary");
+  const altEl = document.querySelector("#output-alternatives");
+  if (!primaryEl) return;
 
   if (state.textLoading) {
-    el.value = "翻译中…";
-    el.parentElement.parentElement.querySelector(".dot-loading")?.remove();
-  } else {
-    el.parentElement.parentElement.querySelector(".dot-loading")?.remove();
-    if (state.translatedText) {
-      el.value = state.translatedText;
-    } else if (state.loading && state.status) {
-      el.value = state.status;
-    } else if (state.status) {
-      el.value = state.status;
-    } else {
-      el.value = "";
+    primaryEl.innerHTML = `<span class="dot-loading"><span></span><span></span><span></span></span> 翻译中…`;
+    if (altEl) altEl.innerHTML = "";
+  } else if (state.translatedText) {
+    primaryEl.textContent = state.translatedText;
+    if (altEl && state.alternatives.length > 0) {
+      altEl.innerHTML = state.alternatives
+        .map(a => `<span class="alt-tag">${escapeHtml(a)}</span>`)
+        .join("");
+    } else if (altEl) {
+      altEl.innerHTML = "";
     }
+  } else if (state.loading && state.status) {
+    primaryEl.textContent = state.status;
+    if (altEl) altEl.innerHTML = "";
+  } else if (state.status) {
+    primaryEl.textContent = state.status;
+    if (altEl) altEl.innerHTML = "";
+  } else {
+    primaryEl.textContent = "";
+    if (altEl) altEl.innerHTML = "";
   }
 
   const btn = document.querySelector("#capture-btn");
@@ -347,12 +342,14 @@ async function translateText() {
 
   state.textLoading = true;
   state.translatedText = "";
+  state.alternatives = [];
   state.detectedLang = "";
   updateOutputArea();
 
   try {
     const r = await invoke("translate_text", { text, fromLang: state.settings.fromLang, toLang: state.settings.toLang });
     state.translatedText = r.translatedText;
+    state.alternatives = r.alternatives || [];
     state.detectedLang = r.fromLangDetected;
     updateDetectedLang();
   } catch (err) {
@@ -416,9 +413,9 @@ function startHotkeyRecording() {
     if (e.shiftKey) mods.push("Shift");
     if (e.metaKey) mods.push("Super");
     if (["Control","Alt","Shift","Meta"].includes(e.key)) return;
+    if (e.key === "Escape") { finishRecording(null); return; }
     let key = KEY_MAP[e.key] || (e.key.length === 1 ? e.key.toUpperCase() : null);
-    if (!key || mods.length === 0) {
-      if (e.key === "Escape") { finishRecording(null); }
+    if (!key) {
       return;
     }
     finishRecording([...mods, key].join("+"));
@@ -458,9 +455,9 @@ function startPopupShortcutRecording() {
     if (e.shiftKey) mods.push("Shift");
     if (e.metaKey) mods.push("Super");
     if (["Control","Alt","Shift","Meta"].includes(e.key)) return;
+    if (e.key === "Escape") { finishRecording(null); return; }
     let key = KEY_MAP[e.key] || (e.key.length === 1 ? e.key.toUpperCase() : null);
-    if (!key || mods.length === 0) {
-      if (e.key === "Escape") { finishRecording(null); }
+    if (!key) {
       return;
     }
     finishRecording([...mods, key].join("+"));
