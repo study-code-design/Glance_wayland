@@ -9,6 +9,7 @@ mod commands;
 mod config;
 mod error;
 mod models;
+mod popup_shortcut;
 mod self_test;
 mod translate_engine;
 
