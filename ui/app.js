@@ -19,7 +19,8 @@ const TTS_LANG_MAP = {
 };
 
 const TRANSLATE_ENGINES = [
-  { value: "bing", label: "必应" }
+  { value: "bing", label: "必应" },
+  { value: "llm", label: "AI 大模型" }
 ];
 
 let debounceTimer = null;
@@ -51,7 +52,8 @@ const state = {
   textLoading: false,
   detectedLang: "",
   ttsPlaying: false,
-  hotkeyRecording: false
+  hotkeyRecording: false,
+  settingsOpen: false
 };
 
 function defaultSettings() {
@@ -76,7 +78,12 @@ function defaultSettings() {
     closeOnOutsideClick: true,
     autostart: false,
     hotkey: "CommandOrControl+Shift+X",
-    textTranslateEngine: "youdao",
+    textTranslateEngine: "bing",
+    llmConfig: {
+      baseUrl: "https://api.openai.com",
+      apiKey: "",
+      model: "gpt-4o-mini"
+    },
     popupShortcut: null
   };
 }
@@ -201,8 +208,16 @@ function renderMain() {
         </div>
       </div>
 
-      <div class="settings-panel" id="settings-panel" style="display:none">
+      <div class="settings-panel" id="settings-panel" style="${state.settingsOpen ? "" : "display:none"}">
         <div class="settings-section">
+          <div class="settings-row">
+            <span class="settings-label">翻译引擎</span>
+            <div class="engine-switcher" id="engine-switcher">
+              ${TRANSLATE_ENGINES.map(e =>
+                `<button class="engine-btn ${state.settings.textTranslateEngine === e.value ? "active" : ""}" data-engine="${e.value}">${e.label}</button>`
+              ).join("")}
+            </div>
+          </div>
           <div class="settings-row">
             <span class="settings-label">开机自启</span>
             <button class="toggle ${state.settings.autostart ? "on" : ""}" id="autostart" aria-pressed="${state.settings.autostart}"></button>
@@ -218,6 +233,26 @@ function renderMain() {
             <div class="shortcut-row settings-shortcut" id="popup-shortcut-row">
               ${state.settings.popupShortcut ? shortcutKeysHtml(state.settings.popupShortcut) : "未设置"} <span class="shortcut-hint">点击可设置</span>
             </div>
+          </div>
+        </div>
+        <div class="settings-section" id="llm-settings" style="${state.settings.textTranslateEngine === "llm" ? "" : "display:none"}">
+          <div class="settings-row">
+            <span class="settings-label">API 地址</span>
+            <input class="settings-input" id="llm-base-url" type="text"
+                    value="${escapeHtml(state.settings.llmConfig.baseUrl)}"
+                    placeholder="https://api.openai.com" />
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">API Key</span>
+            <input class="settings-input" id="llm-api-key" type="password"
+                    value="${escapeHtml(state.settings.llmConfig.apiKey)}"
+                    placeholder="sk-..." />
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">模型</span>
+            <input class="settings-input" id="llm-model" type="text"
+                    value="${escapeHtml(state.settings.llmConfig.model)}"
+                    placeholder="gpt-4o-mini" />
           </div>
         </div>
       </div>
@@ -243,13 +278,14 @@ function renderMain() {
 
   document.querySelector("#settings-btn").addEventListener("click", e => {
     e.stopPropagation();
+    state.settingsOpen = !state.settingsOpen;
     const panel = document.querySelector("#settings-panel");
     const btn = e.currentTarget;
-    const open = panel.style.display === "none";
-    panel.style.display = open ? "" : "none";
-    btn.classList.toggle("open", open);
-    if (open) {
-      invoke?.("resize_main_window", { height: 520 }).catch(() => {});
+    panel.style.display = state.settingsOpen ? "" : "none";
+    btn.classList.toggle("open", state.settingsOpen);
+    if (state.settingsOpen) {
+      const h = state.settings.textTranslateEngine === "llm" ? 620 : 520;
+      invoke?.("resize_main_window", { height: h }).catch(() => {});
     } else {
       invoke?.("resize_main_window", { height: 400 }).catch(() => {});
     }
@@ -266,6 +302,32 @@ function renderMain() {
   document.querySelector("#capture-btn").addEventListener("click", e => { e.stopPropagation(); startCapture(); });
   document.querySelector("#shortcut-row").addEventListener("click", e => { e.stopPropagation(); startHotkeyRecording(); });
   document.querySelector("#popup-shortcut-row").addEventListener("click", e => { e.stopPropagation(); startPopupShortcutRecording(); });
+
+  // Engine switcher
+  document.querySelectorAll(".engine-btn").forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
+      const newEngine = e.currentTarget.dataset.engine;
+      state.settings.textTranslateEngine = newEngine;
+      saveSettings().catch(() => {});
+      // Update active state
+      document.querySelectorAll(".engine-btn").forEach(b => b.classList.toggle("active", b.dataset.engine === newEngine));
+      // Toggle LLM settings visibility
+      const llmSettings = document.querySelector("#llm-settings");
+      if (llmSettings) llmSettings.style.display = newEngine === "llm" ? "" : "none";
+      // Resize window
+      const h = newEngine === "llm" ? 620 : 520;
+      invoke?.("resize_main_window", { height: h }).catch(() => {});
+    });
+  });
+
+  // LLM config inputs
+  const baseUrlInput = document.querySelector("#llm-base-url");
+  const apiKeyInput = document.querySelector("#llm-api-key");
+  const modelInput = document.querySelector("#llm-model");
+  if (baseUrlInput) baseUrlInput.addEventListener("change", e => { state.settings.llmConfig.baseUrl = e.target.value.trim(); saveSettings().catch(() => {}); });
+  if (apiKeyInput) apiKeyInput.addEventListener("change", e => { state.settings.llmConfig.apiKey = e.target.value.trim(); saveSettings().catch(() => {}); });
+  if (modelInput) modelInput.addEventListener("change", e => { state.settings.llmConfig.model = e.target.value.trim(); saveSettings().catch(() => {}); });
 
   inp.focus();
 }
@@ -345,6 +407,15 @@ async function translateText() {
   state.alternatives = [];
   state.detectedLang = "";
   updateOutputArea();
+
+  // Validate LLM config
+  if (state.settings.textTranslateEngine === "llm" && !state.settings.llmConfig.apiKey) {
+    state.textLoading = false;
+    state.status = "请先在设置中配置 API Key";
+    state.statusType = "error";
+    updateOutputArea();
+    return;
+  }
 
   try {
     const r = await invoke("translate_text", { text, fromLang: state.settings.fromLang, toLang: state.settings.toLang });

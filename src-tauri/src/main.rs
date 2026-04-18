@@ -8,6 +8,8 @@ mod capture_window;
 mod commands;
 mod config;
 mod error;
+mod google_translate;
+mod llm_translate;
 mod models;
 mod self_test;
 mod translate_engine;
@@ -17,6 +19,7 @@ use std::path::PathBuf;
 use api::YoudaoClient;
 use app_state::SharedState;
 use bing_translate::BingTranslateClient;
+use llm_translate::LlmTranslateClient;
 use commands::{
     begin_capture, cancel_capture, capture_debug_log, clear_history, close_overlay, hide_window,
     list_history, load_capture_payload, load_overlay_payload, load_settings, resize_main_window,
@@ -123,12 +126,14 @@ fn main() {
                     reqwest::Client::builder()
                         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                         .default_headers(bing_headers)
+                        .redirect(reqwest::redirect::Policy::none())
                         .build()?,
                 );
 
-                let api_client = YoudaoClient::new(general_http);
+                let api_client = YoudaoClient::new(general_http.clone());
                 let bing_client = BingTranslateClient::new(bing_http);
-                let text_translator = TextTranslator::new(bing_client);
+                let llm_client = LlmTranslateClient::new(general_http);
+                let text_translator = TextTranslator::new(bing_client, llm_client);
                 app_handle.manage(SharedState::new(
                     config_store,
                     settings,

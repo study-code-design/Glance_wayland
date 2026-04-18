@@ -72,6 +72,7 @@ impl GoogleTranslateClient {
         Ok(TextTranslationResult {
             translated_text: translated,
             from_lang_detected: detected,
+            alternatives: Vec::new(),
         })
     }
 }

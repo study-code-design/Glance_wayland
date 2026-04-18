@@ -7,6 +7,9 @@ use tokio::sync::RwLock;
 use crate::error::{AppError, AppResult};
 use crate::models::TextTranslationResult;
 
+const CN_HOST: &str = "https://cn.bing.com";
+const WWW_HOST: &str = "https://www.bing.com";
+
 pub struct BingTranslateClient {
     http: Arc<Client>,
     token: Arc<RwLock<Option<BingToken>>>,
@@ -18,6 +21,7 @@ struct BingToken {
     key: String,
     ig: String,
     iid: String,
+    host: String, // "cn" or "www"
 }
 
 impl BingTranslateClient {
@@ -38,20 +42,23 @@ impl BingTranslateClient {
 
         let from_bing = map_lang_code_bing(from);
         let to_bing = map_lang_code_bing(to);
+        let host = &token.host;
 
         let mut headers = HeaderMap::new();
-        headers.insert(REFERER, "https://cn.bing.com/translator".parse().unwrap());
-        headers.insert(ORIGIN, "https://cn.bing.com".parse().unwrap());
+        headers.insert(REFERER, format!("{host}/translator").parse().unwrap());
+        headers.insert(ORIGIN, host.parse().unwrap());
+
+        let url = format!("{host}/ttranslatev3");
 
         let resp = self
             .http
-            .post("https://cn.bing.com/ttranslatev3")
+            .post(&url)
             .query(&[
                 ("isVertical", "1"),
                 ("IG", &token.ig),
                 ("IID", &token.iid),
             ])
-            .headers(headers)
+            .headers(headers.clone())
             .form(&[
                 ("fromLang", from_bing.as_str()),
                 ("to", to_bing.as_str()),
@@ -64,6 +71,13 @@ impl BingTranslateClient {
             .map_err(|e| AppError::Api(format!("Bing translate request failed: {e}")))?;
 
         let status = resp.status();
+
+        // cn.bing.com 301 -> www.bing.com means cn is unavailable, fallback
+        if status.as_u16() == 301 || status.as_u16() == 302 {
+            *self.token.write().await = None;
+            return self.translate_fallback(text, from, to).await;
+        }
+
         if status.as_u16() == 429 {
             *self.token.write().await = None;
             return Err(AppError::Api("Bing translate rate limited, token reset".into()));
@@ -76,7 +90,6 @@ impl BingTranslateClient {
         let body: serde_json::Value = serde_json::from_str(&resp_text)
             .map_err(|e| AppError::Api(format!("Bing translate parse failed: {e}")))?;
 
-        // Captcha or auth error — reset token so next call refreshes it
         if body.get("ShowCaptcha").is_some()
             || body
                 .get("statusCode")
@@ -112,6 +125,77 @@ impl BingTranslateClient {
         })
     }
 
+    async fn translate_fallback(
+        &self,
+        text: &str,
+        from: &str,
+        to: &str,
+    ) -> AppResult<TextTranslationResult> {
+        let token = self.get_or_refresh_token_with_host(WWW_HOST).await?;
+
+        let from_bing = map_lang_code_bing(from);
+        let to_bing = map_lang_code_bing(to);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(REFERER, format!("{WWW_HOST}/translator").parse().unwrap());
+        headers.insert(ORIGIN, WWW_HOST.parse().unwrap());
+
+        let resp = self
+            .http
+            .post(format!("{WWW_HOST}/ttranslatev3"))
+            .query(&[
+                ("isVertical", "1"),
+                ("IG", &token.ig),
+                ("IID", &token.iid),
+            ])
+            .headers(headers)
+            .form(&[
+                ("fromLang", from_bing.as_str()),
+                ("to", to_bing.as_str()),
+                ("text", text),
+                ("token", &token.value),
+                ("key", &token.key),
+            ])
+            .send()
+            .await
+            .map_err(|e| AppError::Api(format!("Bing translate (www) request failed: {e}")))?;
+
+        let status = resp.status();
+        if status.as_u16() == 429 {
+            *self.token.write().await = None;
+            return Err(AppError::Api("Bing translate rate limited".into()));
+        }
+
+        let resp_text = resp.text().await.map_err(|e| {
+            AppError::Api(format!("Bing translate (www) read body failed: {e}"))
+        })?;
+
+        let body: serde_json::Value = serde_json::from_str(&resp_text)
+            .map_err(|e| AppError::Api(format!("Bing translate (www) parse failed: {e}")))?;
+
+        let translated = body
+            .pointer("/0/translations/0/text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let detected = body
+            .pointer("/0/detectedLanguage/language")
+            .and_then(|v| v.as_str())
+            .unwrap_or(from)
+            .to_string();
+
+        if translated.is_empty() {
+            return Err(AppError::Api("Bing translate (www) returned empty result".into()));
+        }
+
+        Ok(TextTranslationResult {
+            translated_text: translated,
+            from_lang_detected: normalize_bing_lang(&detected),
+            alternatives: Vec::new(),
+        })
+    }
+
     async fn get_or_refresh_token(&self) -> AppResult<BingToken> {
         {
             let guard = self.token.read().await;
@@ -120,36 +204,59 @@ impl BingTranslateClient {
             }
         }
 
+        // Try cn first
+        match self.fetch_token(CN_HOST).await {
+            Ok(token) => {
+                *self.token.write().await = Some(token.clone());
+                Ok(token)
+            }
+            Err(_) => {
+                // Fallback to www
+                let token = self.fetch_token(WWW_HOST).await?;
+                *self.token.write().await = Some(token.clone());
+                Ok(token)
+            }
+        }
+    }
+
+    async fn get_or_refresh_token_with_host(&self, host: &str) -> AppResult<BingToken> {
+        let token = self.fetch_token(host).await?;
+        *self.token.write().await = Some(token.clone());
+        Ok(token)
+    }
+
+    async fn fetch_token(&self, host: &str) -> AppResult<BingToken> {
         let resp = self
             .http
-            .get("https://cn.bing.com/translator")
+            .get(format!("{host}/translator"))
             .send()
             .await
-            .map_err(|e| AppError::Api(format!("Bing token fetch failed: {e}")))?;
+            .map_err(|e| AppError::Api(format!("Bing token fetch ({host}) failed: {e}")))?;
+
+        // If redirected, the host is unavailable
+        if resp.status().as_u16() == 301 || resp.status().as_u16() == 302 {
+            return Err(AppError::Api(format!("Bing {host} redirected, unavailable")));
+        }
 
         let html = resp
             .text()
             .await
-            .map_err(|e| AppError::Api(format!("Bing token read failed: {e}")))?;
+            .map_err(|e| AppError::Api(format!("Bing token read ({host}) failed: {e}")))?;
 
-        // Extract abuse prevention token: params_AbusePreventionHelper = [key, token, expiry]
         let (key, value) = extract_abuse_prevention_token(&html)?;
         let ig = extract_ig(&html)?;
         let iid = extract_iid(&html).unwrap_or_else(|| "translator.5023".to_string());
 
-        let token = BingToken {
+        Ok(BingToken {
             value,
             key,
             ig,
             iid,
-        };
-
-        *self.token.write().await = Some(token.clone());
-        Ok(token)
+            host: host.to_string(),
+        })
     }
 }
 
-/// Extract `params_AbusePreventionHelper = [key_number, "token_string", expiry_ms]`
 fn extract_abuse_prevention_token(html: &str) -> AppResult<(String, String)> {
     let prefix = "params_AbusePreventionHelper = [";
     let start = html
@@ -161,7 +268,6 @@ fn extract_abuse_prevention_token(html: &str) -> AppResult<(String, String)> {
         .ok_or_else(|| AppError::Api("Bing: params_AbusePreventionHelper end not found".into()))?;
     let arr_str = &rest[..end];
 
-    // Parse: 1776282492550,"nrMI-zJYQOEbI2HaWB9KirT3EiWqpPx7",3600000
     let parts: Vec<&str> = arr_str.splitn(3, ',').collect();
     if parts.len() < 2 {
         return Err(AppError::Api(
@@ -170,7 +276,6 @@ fn extract_abuse_prevention_token(html: &str) -> AppResult<(String, String)> {
     }
 
     let key = parts[0].trim().to_string();
-    // Token is quoted — strip quotes
     let value = parts[1].trim().trim_matches('"').to_string();
 
     if value.is_empty() || key.is_empty() {

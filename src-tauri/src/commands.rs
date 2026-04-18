@@ -159,10 +159,13 @@ pub async fn translate_text(
     from_lang: String,
     to_lang: String,
 ) -> AppResult<TextTranslationResult> {
-    let engine = state.settings.read().await.text_translate_engine;
+    let (engine, llm_config) = {
+        let settings = state.settings.read().await;
+        (settings.text_translate_engine, settings.llm_config.clone())
+    };
     state
         .text_translator
-        .translate(&text, &from_lang, &to_lang, engine)
+        .translate(&text, &from_lang, &to_lang, engine, &llm_config)
         .await
 }
 

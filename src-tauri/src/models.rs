@@ -6,11 +6,41 @@ use serde_json::Value;
 #[serde(rename_all = "lowercase")]
 pub enum TextTranslateEngine {
     Bing,
+    Llm,
 }
 
 impl Default for TextTranslateEngine {
     fn default() -> Self {
         Self::Bing
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmConfig {
+    #[serde(default = "default_llm_base_url")]
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_llm_model")]
+    pub model: String,
+}
+
+fn default_llm_base_url() -> String {
+    "https://api.openai.com".to_string()
+}
+
+fn default_llm_model() -> String {
+    "gpt-4o-mini".to_string()
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_llm_base_url(),
+            api_key: String::new(),
+            model: default_llm_model(),
+        }
     }
 }
 
@@ -41,6 +71,8 @@ pub struct TranslatorSettings {
     pub hotkey: String,
     #[serde(default)]
     pub text_translate_engine: TextTranslateEngine,
+    #[serde(default)]
+    pub llm_config: LlmConfig,
     #[serde(default)]
     pub popup_shortcut: Option<String>,
 }
@@ -82,6 +114,7 @@ impl Default for TranslatorSettings {
             autostart: false,
             hotkey: default_hotkey(),
             text_translate_engine: TextTranslateEngine::default(),
+            llm_config: LlmConfig::default(),
             popup_shortcut: None,
         }
     }
