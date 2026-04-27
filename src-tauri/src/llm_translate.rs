@@ -64,14 +64,7 @@ impl LlmTranslateClient {
             )
         };
 
-        let mut url = base_url.trim_end_matches('/').to_string();
-        // Strip trailing /v1 or /v1/chat/completions if user included it
-        if url.ends_with("/v1/chat/completions") {
-            url = url[..url.len() - "/v1/chat/completions".len()].to_string();
-        } else if url.ends_with("/v1") {
-            url = url[..url.len() - "/v1".len()].to_string();
-        }
-        url.push_str("/v1/chat/completions");
+        let url = base_url.trim().to_string();
 
         let request = ChatRequest {
             model: model.to_string(),

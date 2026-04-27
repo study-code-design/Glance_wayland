@@ -82,7 +82,7 @@ function defaultSettings() {
     hotkey: "CommandOrControl+Shift+X",
     textTranslateEngine: "bing",
     llmConfig: {
-      baseUrl: "https://api.openai.com",
+      baseUrl: "https://api.openai.com/v1/chat/completions",
       apiKey: "",
       model: "gpt-4o-mini"
     },
@@ -246,10 +246,10 @@ function renderMain() {
         </div>
         <div class="settings-section" id="llm-settings" style="${state.settings.textTranslateEngine === "llm" ? "" : "display:none"}">
           <div class="settings-row">
-            <span class="settings-label">API 地址</span>
+            <span class="settings-label">API 地址 (OpenAI)</span>
             <input class="settings-input" id="llm-base-url" type="text"
                     value="${escapeHtml(state.settings.llmConfig.baseUrl)}"
-                    placeholder="https://api.openai.com" />
+                    placeholder="https://api.openai.com/v1/chat/completions" />
           </div>
           <div class="settings-row">
             <span class="settings-label">API Key</span>

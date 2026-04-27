@@ -27,7 +27,7 @@ pub struct LlmConfig {
 }
 
 fn default_llm_base_url() -> String {
-    "https://api.openai.com".to_string()
+    "https://api.openai.com/v1/chat/completions".to_string()
 }
 
 fn default_llm_model() -> String {
