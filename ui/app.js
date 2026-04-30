@@ -571,10 +571,11 @@ async function renderOverlay() {
     }
     const s = state.overlay.selection;
     const src = `data:image/jpeg;base64,${state.overlay.renderedImageBase64}`;
-    const dpr = window.devicePixelRatio || 1;
+    const useLogicalPixels = String(s.monitorId || "").startsWith("wayland:");
+    const scale = useLogicalPixels ? 1 : (window.devicePixelRatio || 1);
     document.querySelector("#overlay-stage").innerHTML = `
       <img class="overlay-image" src="${src}" alt="translated"
-           style="left:${s.x/dpr}px;top:${s.y/dpr}px;width:${s.width/dpr}px;height:${s.height/dpr}px;opacity:${state.overlay.overlayOpacity};" />`;
+           style="left:${s.x/scale}px;top:${s.y/scale}px;width:${s.width/scale}px;height:${s.height/scale}px;opacity:${state.overlay.overlayOpacity};" />`;
   } catch (err) { renderFatal(`覆盖层初始化失败: ${err}`); }
 }
 

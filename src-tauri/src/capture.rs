@@ -321,7 +321,7 @@ pub fn is_wayland_session() -> bool {
 #[cfg(target_os = "linux")]
 pub fn capture_wayland_selection() -> AppResult<Option<LinuxWaylandCapture>> {
     let slurp_output = Command::new("slurp")
-        .args(["-f", "%x,%y,%w,%h"])
+        .args(["-f", "%x,%y %wx%h"])
         .output()
         .map_err(|e| {
             AppError::Capture(format!(
@@ -388,25 +388,26 @@ pub fn capture_wayland_selection() -> AppResult<Option<LinuxWaylandCapture>> {
 
 #[cfg(target_os = "linux")]
 fn parse_slurp_geometry(geometry: &str) -> AppResult<(i32, i32, u32, u32)> {
-    let mut parts = geometry.split(',');
-    let x = parts
-        .next()
-        .ok_or_else(|| AppError::Parse("slurp output missing x".into()))?
+    let (position, size) = geometry
+        .split_once(' ')
+        .ok_or_else(|| AppError::Parse("slurp output missing size".into()))?;
+    let (x_str, y_str) = position
+        .split_once(',')
+        .ok_or_else(|| AppError::Parse("slurp output missing coordinates".into()))?;
+    let (width_str, height_str) = size
+        .split_once('x')
+        .ok_or_else(|| AppError::Parse("slurp output missing dimensions".into()))?;
+
+    let x = x_str
         .parse::<i32>()
         .map_err(|e| AppError::Parse(format!("invalid slurp x: {e}")))?;
-    let y = parts
-        .next()
-        .ok_or_else(|| AppError::Parse("slurp output missing y".into()))?
+    let y = y_str
         .parse::<i32>()
         .map_err(|e| AppError::Parse(format!("invalid slurp y: {e}")))?;
-    let width = parts
-        .next()
-        .ok_or_else(|| AppError::Parse("slurp output missing width".into()))?
+    let width = width_str
         .parse::<u32>()
         .map_err(|e| AppError::Parse(format!("invalid slurp width: {e}")))?;
-    let height = parts
-        .next()
-        .ok_or_else(|| AppError::Parse("slurp output missing height".into()))?
+    let height = height_str
         .parse::<u32>()
         .map_err(|e| AppError::Parse(format!("invalid slurp height: {e}")))?;
     Ok((x, y, width, height))

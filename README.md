@@ -94,6 +94,18 @@ sudo pacman -S --needed grim slurp
 
 应用会在检测到 Wayland 会话时自动使用 `slurp` 进行区域选择，并用 `grim` 完成截图。
 
+如果你使用 Hyprland，且全局快捷键插件无法正常工作，可以直接调用：
+
+```bash
+./src-tauri/target/release/glance --capture
+```
+
+然后在 `hyprland.conf` 中绑定，例如：
+
+```ini
+bind = SUPER, X, exec, Glance/src-tauri/target/release/glance --capture
+```
+
 ## macOS 安装说明
 
 由于 Glance 尚未启用付费开发者证书签名（不走 App Store），在 macOS 上首次下载安装后会触发系统安全拦截。

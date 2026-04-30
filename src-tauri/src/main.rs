@@ -43,6 +43,8 @@ fn main() {
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
         .init();
 
+    let capture_on_launch = std::env::args().any(|arg| arg == "--capture");
+
     if self_test::should_run_capture_self_test() {
         match self_test::run_capture_self_test() {
             Ok(result) => {
@@ -78,12 +80,30 @@ fn main() {
     }
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if args.iter().any(|arg| arg == "--capture") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    let state: tauri::State<'_, SharedState> = app.state();
+                    if let Err(err) = commands::begin_capture(app.clone(), state).await {
+                        tracing::error!("single-instance --capture failed: {err}");
+                    }
+                });
+            } else {
+                show_main_window(app);
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .setup(|app| {
+        .setup(move |app| {
             let base_dir = app
                 .path()
                 .app_data_dir()
@@ -99,9 +119,11 @@ fn main() {
                     .unwrap_or_else(|_| TranslatorSettings::default());
 
                 commands::apply_autostart(&app_handle, settings.autostart);
-                commands::apply_hotkey(&app_handle, &settings.hotkey);
-                if let Some(ref popup) = settings.popup_shortcut {
-                    commands::apply_popup_shortcut(&app_handle, popup);
+                if !capture_on_launch {
+                    commands::apply_hotkey(&app_handle, &settings.hotkey);
+                    if let Some(ref popup) = settings.popup_shortcut {
+                        commands::apply_popup_shortcut(&app_handle, popup);
+                    }
                 }
 
                 // ── HTTP clients ────────────────────────────────────────────────
@@ -175,6 +197,9 @@ fn main() {
 
             // ── Intercept window close → hide to tray ────────────────────
             let main_window = app.get_webview_window("main").unwrap();
+            if capture_on_launch {
+                let _ = main_window.hide();
+            }
             let mw = main_window.clone();
             main_window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -205,7 +230,24 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build tauri app");
 
-    app.run(|_app_handle, _event| {
+    let mut pending_capture_on_ready = capture_on_launch;
+    app.run(move |_app_handle, _event| {
+        #[cfg(not(target_os = "macos"))]
+        if pending_capture_on_ready && matches!(_event, tauri::RunEvent::Ready) {
+            pending_capture_on_ready = false;
+            let app = _app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                let state: tauri::State<'_, SharedState> = app.state();
+                if let Err(err) = commands::begin_capture(app.clone(), state).await {
+                    tracing::error!("--capture failed: {err}");
+                }
+            });
+        }
+
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen { .. } = _event {
             show_main_window(_app_handle);

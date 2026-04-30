@@ -4,8 +4,7 @@ use std::sync::mpsc;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size, State, WebviewUrl,
-    WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, Position, Size, State, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -1152,8 +1151,21 @@ fn create_overlay_window(
     height: u32,
 ) -> AppResult<()> {
     if let Some(w) = app.get_webview_window(OVERLAY_WINDOW_LABEL) {
-        w.set_position(Position::Physical(PhysicalPosition::new(x, y)))?;
-        w.set_size(Size::Physical(PhysicalSize::new(width, height)))?;
+        #[cfg(target_os = "linux")]
+        {
+            w.set_position(Position::Logical(tauri::LogicalPosition::new(
+                x as f64, y as f64,
+            )))?;
+            w.set_size(Size::Logical(tauri::LogicalSize::new(
+                width as f64,
+                height as f64,
+            )))?;
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            w.set_position(Position::Physical(PhysicalPosition::new(x, y)))?;
+            w.set_size(Size::Physical(PhysicalSize::new(width, height)))?;
+        }
         w.show()?;
         w.set_focus()?;
         return Ok(());
@@ -1172,8 +1184,21 @@ fn create_overlay_window(
         .position(0.0, 0.0)
         .inner_size(100.0, 100.0)
         .build()?;
-    window.set_position(Position::Physical(PhysicalPosition::new(x, y)))?;
-    window.set_size(Size::Physical(PhysicalSize::new(width, height)))?;
+    #[cfg(target_os = "linux")]
+    {
+        window.set_position(Position::Logical(tauri::LogicalPosition::new(
+            x as f64, y as f64,
+        )))?;
+        window.set_size(Size::Logical(tauri::LogicalSize::new(
+            width as f64,
+            height as f64,
+        )))?;
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        window.set_position(Position::Physical(PhysicalPosition::new(x, y)))?;
+        window.set_size(Size::Physical(PhysicalSize::new(width, height)))?;
+    }
     window.show()?;
     window.set_focus()?;
     Ok(())
