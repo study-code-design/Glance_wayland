@@ -16,7 +16,8 @@ use crate::capture_window::{self, CaptureCommand, CaptureEvent};
 use crate::error::{AppError, AppResult};
 use crate::models::{
     CaptureRect, CaptureTranslatePayload, CaptureViewPayload, HistoryQuery, OverlayPayload,
-    SelectionPayload, TextTranslationResult, TranslationHistoryItem, TranslatorSettings,
+    SelectionPayload, TextTranslationResult, TranslationHistoryItem, TranslationResponse,
+    TranslatorSettings,
 };
 use crate::popup_shortcut::{decide_popup_shortcut_action, PopupShortcutAction};
 
@@ -379,7 +380,7 @@ async fn begin_capture_impl(app: &AppHandle, state: &SharedState) -> AppResult<(
         emit_workflow_state(app, "请框选需要翻译的区域", "", false)?;
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
         let result = tokio::task::spawn_blocking(capture::find_cursor_monitor)
             .await
@@ -432,8 +433,78 @@ async fn begin_capture_impl(app: &AppHandle, state: &SharedState) -> AppResult<(
         });
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        if capture::is_wayland_session() {
+            run_linux_wayland_capture(app, state).await?;
+        } else {
+            let result = tokio::task::spawn_blocking(capture::find_cursor_monitor)
+                .await
+                .map_err(|e| AppError::Capture(format!("find monitor task failed: {e}")))??;
+
+            let monitor = result.monitor;
+            tracing::info!(
+                "[PERF] find_cursor_monitor: {:?} (scale={})",
+                t0.elapsed(),
+                monitor.scale_factor
+            );
+
+            let scale_factor = monitor.scale_factor;
+            let screen = result.screen;
+
+            let (rgba, w, h) =
+                tokio::task::spawn_blocking(move || capture::capture_screen_to_memory(screen))
+                    .await
+                    .map_err(|e| AppError::Capture(format!("capture task failed: {e}")))??;
+
+            tracing::info!(
+                "[PERF] capture_to_memory: {:?} | {}x{} ({:.1} MB RGBA)",
+                t0.elapsed(),
+                w,
+                h,
+                rgba.len() as f64 / 1_048_576.0
+            );
+
+            *state.capture_session.write().await = Some(crate::app_state::ActiveCaptureSession {
+                rgba: rgba.clone(),
+                img_w: w,
+                img_h: h,
+                scale_factor,
+                monitor_x: monitor.x,
+                monitor_y: monitor.y,
+                monitor_width: monitor.width,
+                monitor_height: monitor.height,
+                preview_image_base64: None,
+                preview_image_mime: String::new(),
+            });
+
+            let (event_tx, event_rx) = mpsc::channel::<CaptureEvent>();
+            capture_window::start_capture(
+                rgba.clone(),
+                w,
+                h,
+                scale_factor,
+                monitor.x,
+                monitor.y,
+                event_tx,
+            );
+            tracing::info!("[PERF] start_capture_native: {:?}", t0.elapsed());
+
+            let state_clone = state.clone();
+            let app_clone = app.clone();
+            tokio::spawn(async move {
+                handle_capture_events(event_rx, rgba, w, scale_factor, state_clone, app_clone)
+                    .await;
+            });
+        }
+    }
+
+    #[cfg(target_os = "windows")]
     emit_workflow_state(app, "请框选需要翻译的区域", "", false)?;
+    #[cfg(target_os = "linux")]
+    if !capture::is_wayland_session() {
+        emit_workflow_state(app, "请框选需要翻译的区域", "", false)?;
+    }
     Ok(())
 }
 
@@ -756,6 +827,19 @@ async fn translate_capture_png(
     rect: &CaptureRect,
     scale_factor: f64,
 ) -> AppResult<String> {
+    Ok(
+        translate_capture_png_response(state, png_bytes, rect, scale_factor)
+            .await?
+            .rendered_image_base64,
+    )
+}
+
+async fn translate_capture_png_response(
+    state: &SharedState,
+    png_bytes: Vec<u8>,
+    rect: &CaptureRect,
+    scale_factor: f64,
+) -> AppResult<TranslationResponse> {
     let (settings, monitor_x, monitor_y, monitor_width, monitor_height) = {
         let guard = state.capture_session.read().await;
         let session = guard
@@ -823,7 +907,7 @@ async fn translate_capture_png(
         }
     }
 
-    Ok(response.rendered_image_base64)
+    Ok(response)
 }
 
 fn emit_workflow_state(app: &AppHandle, message: &str, kind: &str, busy: bool) -> AppResult<()> {
@@ -850,6 +934,83 @@ fn decode_jpeg_to_rgba(jpeg_bytes: &[u8]) -> AppResult<(Vec<u8>, u32, u32)> {
     let w = img.width();
     let h = img.height();
     Ok((img.into_raw(), w, h))
+}
+
+#[cfg(target_os = "linux")]
+async fn run_linux_wayland_capture(app: &AppHandle, state: &SharedState) -> AppResult<()> {
+    emit_workflow_state(app, "请选择需要翻译的区域", "", true).ok();
+
+    let selection = tokio::task::spawn_blocking(capture::capture_wayland_selection)
+        .await
+        .map_err(|e| AppError::Capture(format!("Wayland capture task failed: {e}")))??;
+
+    let Some(selection) = selection else {
+        reset_capture_state(state).await;
+        emit_workflow_state(app, "", "", false).ok();
+        return Ok(());
+    };
+
+    let rect = CaptureRect {
+        x: 0,
+        y: 0,
+        width: selection.width,
+        height: selection.height,
+    };
+
+    *state.capture_session.write().await = Some(crate::app_state::ActiveCaptureSession {
+        rgba: selection.rgba_bytes,
+        img_w: selection.width,
+        img_h: selection.height,
+        scale_factor: 1.0,
+        monitor_x: selection.rect_x,
+        monitor_y: selection.rect_y,
+        monitor_width: selection.width,
+        monitor_height: selection.height,
+        preview_image_base64: None,
+        preview_image_mime: String::new(),
+    });
+
+    emit_workflow_state(app, "正在翻译…", "", true).ok();
+    let response = translate_capture_png_response(state, selection.png_bytes, &rect, 1.0).await?;
+
+    let settings = state.settings.read().await.clone();
+    *state.overlay_payload.write().await = Some(OverlayPayload {
+        request_id: response.request_id,
+        lan_from: response.lan_from,
+        lan_to: response.lan_to,
+        selection: SelectionPayload {
+            x: 0.0,
+            y: 0.0,
+            width: selection.width as f64,
+            height: selection.height as f64,
+            monitor_id: format!(
+                "wayland:{}:{}:{}:{}",
+                selection.rect_x, selection.rect_y, selection.width, selection.height
+            ),
+            monitor_x: selection.rect_x,
+            monitor_y: selection.rect_y,
+            monitor_width: selection.width,
+            monitor_height: selection.height,
+            monitor_scale_factor: 1.0,
+        },
+        overlay_opacity: settings.overlay_opacity,
+        overlay_font_scale: settings.overlay_font_scale,
+        close_on_outside_click: settings.close_on_outside_click,
+        rendered_image_base64: response.rendered_image_base64,
+        regions: response.regions,
+        pairs: response.pairs,
+    });
+
+    create_overlay_window(
+        app,
+        selection.rect_x,
+        selection.rect_y,
+        selection.width,
+        selection.height,
+    )?;
+    reset_capture_state(state).await;
+    emit_workflow_state(app, "翻译完成", "ok", false).ok();
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -1017,4 +1178,3 @@ fn create_overlay_window(
     window.set_focus()?;
     Ok(())
 }
-

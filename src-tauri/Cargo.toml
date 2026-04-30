@@ -33,6 +33,7 @@ objc2-app-kit = { version = "0.2.2", features = ["NSWindow", "NSEvent"] }
 
 [features]
 default = []
+x11 = []
 
 # Speed up screenshot capture and image processing in debug builds.
 # BitBlt drops from ~473ms to ~50-100ms with opt-level=2.

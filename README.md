@@ -84,6 +84,16 @@ cargo tauri build
 
 产物在 `src-tauri/target/release/bundle/` 下。
 
+## Linux / Wayland
+
+在 Arch Linux 的 Wayland 会话下，截图翻译依赖以下工具：
+
+```bash
+sudo pacman -S --needed grim slurp
+```
+
+应用会在检测到 Wayland 会话时自动使用 `slurp` 进行区域选择，并用 `grim` 完成截图。
+
 ## macOS 安装说明
 
 由于 Glance 尚未启用付费开发者证书签名（不走 App Store），在 macOS 上首次下载安装后会触发系统安全拦截。

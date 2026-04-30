@@ -10,6 +10,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(target_os = "linux")]
+use std::process::Command;
+
 use crate::error::{AppError, AppResult};
 
 #[cfg(target_os = "macos")]
@@ -31,6 +34,16 @@ pub struct MonitorInfo {
 pub struct CursorMonitorResult {
     pub screen: CaptureScreen,
     pub monitor: MonitorInfo,
+}
+
+#[cfg(target_os = "linux")]
+pub struct LinuxWaylandCapture {
+    pub png_bytes: Vec<u8>,
+    pub rgba_bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub rect_x: i32,
+    pub rect_y: i32,
 }
 
 #[cfg(target_os = "macos")]
@@ -297,6 +310,106 @@ fn get_cursor_position() -> Result<(i32, i32), String> {
 
     #[allow(unreachable_code)]
     Err("Linux cursor position not available without x11".into())
+}
+
+#[cfg(target_os = "linux")]
+pub fn is_wayland_session() -> bool {
+    matches!(std::env::var("XDG_SESSION_TYPE").ok().as_deref(), Some("wayland"))
+        || std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+#[cfg(target_os = "linux")]
+pub fn capture_wayland_selection() -> AppResult<Option<LinuxWaylandCapture>> {
+    let slurp_output = Command::new("slurp")
+        .args(["-f", "%x,%y,%w,%h"])
+        .output()
+        .map_err(|e| {
+            AppError::Capture(format!(
+                "failed to launch slurp; install it with `sudo pacman -S slurp`: {e}"
+            ))
+        })?;
+
+    if !slurp_output.status.success() {
+        return if slurp_output.status.code() == Some(1) {
+            Ok(None)
+        } else {
+            Err(AppError::Capture(format!(
+                "slurp failed: {}",
+                String::from_utf8_lossy(&slurp_output.stderr).trim()
+            )))
+        };
+    }
+
+    let geometry = String::from_utf8(slurp_output.stdout)
+        .map_err(|e| AppError::Capture(format!("slurp returned invalid UTF-8: {e}")))?;
+    let geometry = geometry.trim();
+    if geometry.is_empty() {
+        return Ok(None);
+    }
+
+    let (rect_x, rect_y, width, height) = parse_slurp_geometry(geometry)?;
+    if width <= 4 || height <= 4 {
+        return Ok(None);
+    }
+
+    let grim_output = Command::new("grim")
+        .args(["-g", geometry, "-"])
+        .output()
+        .map_err(|e| {
+            AppError::Capture(format!(
+                "failed to launch grim; install it with `sudo pacman -S grim`: {e}"
+            ))
+        })?;
+
+    if !grim_output.status.success() {
+        return Err(AppError::Capture(format!(
+            "grim failed: {}",
+            String::from_utf8_lossy(&grim_output.stderr).trim()
+        )));
+    }
+
+    let png_bytes = grim_output.stdout;
+    let reader = image::ImageReader::new(std::io::Cursor::new(&png_bytes))
+        .with_guessed_format()
+        .map_err(AppError::Io)?;
+    let image = reader.decode()?.into_rgba8();
+    let width = image.width();
+    let height = image.height();
+
+    Ok(Some(LinuxWaylandCapture {
+        png_bytes,
+        rgba_bytes: image.into_raw(),
+        width,
+        height,
+        rect_x,
+        rect_y,
+    }))
+}
+
+#[cfg(target_os = "linux")]
+fn parse_slurp_geometry(geometry: &str) -> AppResult<(i32, i32, u32, u32)> {
+    let mut parts = geometry.split(',');
+    let x = parts
+        .next()
+        .ok_or_else(|| AppError::Parse("slurp output missing x".into()))?
+        .parse::<i32>()
+        .map_err(|e| AppError::Parse(format!("invalid slurp x: {e}")))?;
+    let y = parts
+        .next()
+        .ok_or_else(|| AppError::Parse("slurp output missing y".into()))?
+        .parse::<i32>()
+        .map_err(|e| AppError::Parse(format!("invalid slurp y: {e}")))?;
+    let width = parts
+        .next()
+        .ok_or_else(|| AppError::Parse("slurp output missing width".into()))?
+        .parse::<u32>()
+        .map_err(|e| AppError::Parse(format!("invalid slurp width: {e}")))?;
+    let height = parts
+        .next()
+        .ok_or_else(|| AppError::Parse("slurp output missing height".into()))?
+        .parse::<u32>()
+        .map_err(|e| AppError::Parse(format!("invalid slurp height: {e}")))?;
+    Ok((x, y, width, height))
 }
 
 // ── Screen capture ──────────────────────────────────────────────────────────
