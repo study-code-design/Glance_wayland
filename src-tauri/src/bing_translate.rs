@@ -1,7 +1,7 @@
-mac-youdao.comuse std::sync::Arc;
+use std::sync::Arc;
 
-use reqwest::Client;
 use reqwest::header::{HeaderMap, ORIGIN, REFERER};
+use reqwest::Client;
 use tokio::sync::RwLock;
 
 use crate::error::{AppError, AppResult};
@@ -53,11 +53,7 @@ impl BingTranslateClient {
         let resp = self
             .http
             .post(&url)
-            .query(&[
-                ("isVertical", "1"),
-                ("IG", &token.ig),
-                ("IID", &token.iid),
-            ])
+            .query(&[("isVertical", "1"), ("IG", &token.ig), ("IID", &token.iid)])
             .headers(headers.clone())
             .form(&[
                 ("fromLang", from_bing.as_str()),
@@ -80,12 +76,15 @@ impl BingTranslateClient {
 
         if status.as_u16() == 429 {
             *self.token.write().await = None;
-            return Err(AppError::Api("Bing translate rate limited, token reset".into()));
+            return Err(AppError::Api(
+                "Bing translate rate limited, token reset".into(),
+            ));
         }
 
-        let resp_text = resp.text().await.map_err(|e| {
-            AppError::Api(format!("Bing translate read body failed: {e}"))
-        })?;
+        let resp_text = resp
+            .text()
+            .await
+            .map_err(|e| AppError::Api(format!("Bing translate read body failed: {e}")))?;
 
         let body: serde_json::Value = serde_json::from_str(&resp_text)
             .map_err(|e| AppError::Api(format!("Bing translate parse failed: {e}")))?;
@@ -97,7 +96,9 @@ impl BingTranslateClient {
                 .map_or(false, |c| c >= 400)
         {
             *self.token.write().await = None;
-            return Err(AppError::Api("Bing translate auth failed, token reset".into()));
+            return Err(AppError::Api(
+                "Bing translate auth failed, token reset".into(),
+            ));
         }
 
         let translated = body
@@ -113,9 +114,7 @@ impl BingTranslateClient {
             .to_string();
 
         if translated.is_empty() {
-            return Err(AppError::Api(
-                "Bing translate returned empty result".into(),
-            ));
+            return Err(AppError::Api("Bing translate returned empty result".into()));
         }
 
         Ok(TextTranslationResult {
@@ -143,11 +142,7 @@ impl BingTranslateClient {
         let resp = self
             .http
             .post(format!("{WWW_HOST}/ttranslatev3"))
-            .query(&[
-                ("isVertical", "1"),
-                ("IG", &token.ig),
-                ("IID", &token.iid),
-            ])
+            .query(&[("isVertical", "1"), ("IG", &token.ig), ("IID", &token.iid)])
             .headers(headers)
             .form(&[
                 ("fromLang", from_bing.as_str()),
@@ -166,9 +161,10 @@ impl BingTranslateClient {
             return Err(AppError::Api("Bing translate rate limited".into()));
         }
 
-        let resp_text = resp.text().await.map_err(|e| {
-            AppError::Api(format!("Bing translate (www) read body failed: {e}"))
-        })?;
+        let resp_text = resp
+            .text()
+            .await
+            .map_err(|e| AppError::Api(format!("Bing translate (www) read body failed: {e}")))?;
 
         let body: serde_json::Value = serde_json::from_str(&resp_text)
             .map_err(|e| AppError::Api(format!("Bing translate (www) parse failed: {e}")))?;
@@ -186,7 +182,9 @@ impl BingTranslateClient {
             .to_string();
 
         if translated.is_empty() {
-            return Err(AppError::Api("Bing translate (www) returned empty result".into()));
+            return Err(AppError::Api(
+                "Bing translate (www) returned empty result".into(),
+            ));
         }
 
         Ok(TextTranslationResult {
@@ -235,7 +233,9 @@ impl BingTranslateClient {
 
         // If redirected, the host is unavailable
         if resp.status().as_u16() == 301 || resp.status().as_u16() == 302 {
-            return Err(AppError::Api(format!("Bing {host} redirected, unavailable")));
+            return Err(AppError::Api(format!(
+                "Bing {host} redirected, unavailable"
+            )));
         }
 
         let html = resp
